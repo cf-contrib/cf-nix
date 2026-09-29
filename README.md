@@ -53,17 +53,18 @@ Also: this is a hobby project. I wanted an excuse to spend more time with Cloudf
 
 ## How it works
 
-```
-┌──────────┐    GET /<hash>.narinfo    ┌──────────────┐    R2 GET    ┌────────┐
-│   nix    │ ────────────────────────► │  Worker (CF) │ ───────────► │   R2   │
-│  client  │ ◄──────────────────────── │              │ ◄─────────── │ bucket │
-└──────────┘     narinfo + .nar        └──────────────┘    object    └────────┘
-                                              ▲
-                                              │ PUT (Basic auth)
-                                       ┌──────────────┐
-                                       │  uploader    │
-                                       │ (nix copy …) │
-                                       └──────────────┘
+```mermaid
+flowchart LR
+    client["nix client"]
+    worker["Worker (CF)"]
+    bucket[("R2 bucket")]
+    uploader["uploader<br/>(nix copy …)"]
+
+    client -- "GET /#lt;hash#gt;.narinfo" --> worker
+    worker -- "narinfo + .nar" --> client
+    worker -- "R2 GET / PUT" --> bucket
+    bucket -- "object" --> worker
+    uploader -- "PUT (Basic auth)" --> worker
 ```
 
 Reads are public. Uploads need HTTP Basic auth. Everything lives in one R2 bucket.
