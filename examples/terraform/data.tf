@@ -1,6 +1,6 @@
 data "github_release" "worker" {
   owner       = "cf-contrib"
-  repository  = "nix-cache"
+  repository  = "cf-nix-cache"
   retrieve_by = "latest"
 }
 
