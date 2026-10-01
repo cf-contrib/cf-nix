@@ -1,7 +1,8 @@
 StorePath: /nix/store/j5m1qd2dbsmhq0mw13yb8wijnm3pq4z0-cf-nix-r2-fixture
 URL: nar/j5m1qd2dbsmhq0mw13yb8wijnm3pq4z0.nar
-NarHash: sha256-LHdODcc9LKl8TykaDMvSkpcBrXrTcP8aW2B6trJhxdE=
-NarSize: 256
-References:
-Deriver: /nix/store/f9x8my1mqpayq9fy7c5mj6xyj4ic6in2-cf-nix-r2-fixture.drv
 Compression: none
+NarHash: sha256:1lf5c6rbcyk0bcdgyw6kganh35wjsb5hq6i99xyajb1xqw6lwxrc
+NarSize: 256
+References: 
+Deriver: f9x8my1mqpayq9fy7c5mj6xyj4ic6in2-cf-nix-r2-fixture.drv
+Sig: cache.example.org-1:mCGJ9kG7087WHmPqHFjAtiK148PSOCf5x4f8WD16+N/IP5TyAuDDHE9sNp2ecAdTtemQJFMC2xWQ1SCOd5r3Dw==
