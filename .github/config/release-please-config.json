@@ -9,6 +9,9 @@
       "include-component-in-tag": false,
       "bump-minor-pre-major": true,
       "extra-files": [
+        "README.md",
+        "packages/cf-nix-worker/terraform/README.md",
+        "packages/cf-nix-worker/terraform/variables.tf",
         {
           "type": "toml",
           "path": "packages/cf-nix-worker/Cargo.toml",

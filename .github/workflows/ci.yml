@@ -21,6 +21,13 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@v23
       - name: Run Tests
         run: nix develop --command cargo test
+      - name: Validate Terraform Module
+        working-directory: packages/cf-nix-worker/terraform
+        run: |
+          nix develop --command tofu fmt -check -recursive
+          nix develop --command tofu init -backend=false
+          nix develop --command tofu validate
+          nix develop --command tofu test
   release:
     needs: test
     if: github.event_name == 'push'

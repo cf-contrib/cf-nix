@@ -1,19 +1,43 @@
-# Worker script (logical resource — no content yet).
-resource "cloudflare_worker" "nix_cache" {
+locals {
+  custom_domain = !endswith(var.hostname, ".workers.dev")
+  url           = "https://${var.hostname}"
+
+  oidc = length(var.github_oidc_rules) > 0
+
+  # Upload auth: a mechanism is on only when its bindings exist.
+  auth_vars = {
+    CF_NIX_WORKER_GITHUB_REPOSITORY    = var.github_repository
+    CF_NIX_WORKER_GITHUB_OWNER_ID      = local.oidc ? var.github_owner_id : null
+    CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE = local.oidc ? coalesce(var.github_oidc_audience, local.url) : null
+    CF_NIX_WORKER_GITHUB_OIDC_RULES    = local.oidc ? jsonencode(var.github_oidc_rules) : null
+  }
+}
+
+# Worker script, reachable on its workers.dev URL or on the custom domain.
+resource "cloudflare_worker" "this" {
   account_id = var.account_id
   name       = var.worker_name
 
   subdomain = {
+    enabled = !local.custom_domain
+  }
+
+  # Uploads are logged with the identity they resolved to.
+  observability = {
     enabled = true
+    logs = {
+      enabled         = true
+      invocation_logs = false
+    }
   }
 }
 
-# Upload a new version on every asset / binding change. The modules list
+# Upload a new version on every bundle or binding change. The modules list
 # carries both the JS entry and the wasm module, matching what worker-build
 # emits and what `index.js` imports via `./index_bg.wasm`.
-resource "cloudflare_worker_version" "nix_cache" {
+resource "cloudflare_worker_version" "this" {
   account_id         = var.account_id
-  worker_id          = cloudflare_worker.nix_cache.id
+  worker_id          = cloudflare_worker.this.id
   compatibility_date = var.worker_compatibility_date
   main_module        = "index.js"
 
@@ -21,12 +45,12 @@ resource "cloudflare_worker_version" "nix_cache" {
     {
       name           = "index.js"
       content_type   = "application/javascript+module"
-      content_base64 = base64encode(data.http.index_js.response_body)
+      content_base64 = local.index_js_base64
     },
     {
       name           = "index_bg.wasm"
       content_type   = "application/wasm"
-      content_base64 = data.http.index_wasm.response_body_base64
+      content_base64 = local.index_wasm_base64
     },
   ]
 
@@ -35,15 +59,18 @@ resource "cloudflare_worker_version" "nix_cache" {
       {
         name        = "CF_NIX_WORKER_BUCKET"
         type        = "r2_bucket"
-        bucket_name = cloudflare_r2_bucket.nix.name
-      },
-      {
-        name = "CF_NIX_WORKER_SECRET"
-        type = "secret_text"
-        text = var.nix_secret
+        bucket_name = cloudflare_r2_bucket.this.name
       },
     ],
-    # Upload auth: a mechanism is on only when its bindings exist.
+    # Only ever from Secrets Store, so the signing key never enters Terraform state.
+    var.signing_key_secret == null ? [] : [
+      {
+        name        = "CF_NIX_WORKER_SECRET"
+        type        = "secrets_store_secret"
+        store_id    = var.signing_key_secret.secret_store_id
+        secret_name = var.signing_key_secret.secret_name
+      },
+    ],
     [
       for name, text in local.auth_vars : {
         name = name
@@ -54,45 +81,48 @@ resource "cloudflare_worker_version" "nix_cache" {
   )
 }
 
-locals {
-  auth_vars = {
-    CF_NIX_WORKER_GITHUB_REPOSITORY    = var.github_repository
-    CF_NIX_WORKER_GITHUB_OWNER_ID      = length(var.github_oidc_rules) == 0 ? null : var.github_owner_id
-    CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE = length(var.github_oidc_rules) == 0 ? null : var.github_oidc_audience
-    CF_NIX_WORKER_GITHUB_OIDC_RULES    = length(var.github_oidc_rules) == 0 ? null : jsonencode(var.github_oidc_rules)
-  }
-}
-
 # Promote the new version to 100% of traffic.
-resource "cloudflare_workers_deployment" "nix_cache" {
+resource "cloudflare_workers_deployment" "this" {
   account_id  = var.account_id
-  script_name = cloudflare_worker.nix_cache.name
+  script_name = cloudflare_worker.this.name
   strategy    = "percentage"
 
   versions = [
     {
       percentage = 100
-      version_id = cloudflare_worker_version.nix_cache.id
+      version_id = cloudflare_worker_version.this.id
     },
   ]
 }
 
-# R2 bucket for cached .narinfo / .nar objects.
-resource "cloudflare_r2_bucket" "nix" {
+resource "cloudflare_workers_custom_domain" "this" {
+  count = local.custom_domain ? 1 : 0
+
   account_id = var.account_id
-  name       = var.r2_bucket_name
+  zone_id    = var.zone_id
+  hostname   = var.hostname
+  service    = cloudflare_worker.this.name
+
+  depends_on = [cloudflare_workers_deployment.this]
 }
 
-# Expire cached objects 45 days after upload. Nix re-uploads on every build,
-# so this just bounds storage cost without losing real cache value.
-# `max_age` is in seconds: 45 * 24 * 60 * 60 = 3_888_000.
-resource "cloudflare_r2_bucket_lifecycle" "nix" {
+# R2 bucket for cached .narinfo / .nar objects.
+resource "cloudflare_r2_bucket" "this" {
+  account_id = var.account_id
+  name       = var.bucket_name
+}
+
+# Nix re-uploads paths on every build that produces them, so expiring old
+# objects bounds storage cost without losing much cache value.
+resource "cloudflare_r2_bucket_lifecycle" "this" {
+  count = var.expire_after_days == null ? 0 : 1
+
   account_id  = var.account_id
-  bucket_name = cloudflare_r2_bucket.nix.name
+  bucket_name = cloudflare_r2_bucket.this.name
 
   rules = [
     {
-      id      = "delete-after-45-days"
+      id      = "delete-after-${var.expire_after_days}-days"
       enabled = true
       conditions = {
         prefix = ""
@@ -100,7 +130,7 @@ resource "cloudflare_r2_bucket_lifecycle" "nix" {
       delete_objects_transition = {
         condition = {
           type    = "Age"
-          max_age = 3888000
+          max_age = var.expire_after_days * 24 * 60 * 60
         }
       }
     },

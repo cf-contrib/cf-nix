@@ -31,6 +31,7 @@
         devShells.default = pkgs.mkShell {
           name = "cf-nix-cache";
           packages = [
+            pkgs.opentofu
             pkgs.pkg-config
             pkgs.wrangler
             pkgs.worker-build
