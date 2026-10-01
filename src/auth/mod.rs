@@ -1,11 +1,12 @@
-use std::{collections::HashMap, fmt};
+use std::fmt;
 
 use http_auth_basic::Credentials;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use worker::{Env, Request, Response, Result, console_error};
 
-use crate::{github, oidc};
+mod cache;
+mod github;
+mod oidc;
 
 /// The identity an authorized request was resolved to.
 ///
@@ -81,17 +82,17 @@ impl AuthError {
 /// Each mechanism is enabled only when its vars are set. With none set,
 /// every authorized request is rejected with `401`.
 #[derive(Debug)]
-pub struct Config {
+struct Config {
     /// Legacy shared token (`NIX_TOKEN`).
-    pub token: Option<String>,
+    token: Option<String>,
     /// GitHub user tokens (`GITHUB_REPOSITORY`).
-    pub github: Option<github::Config>,
+    github: Option<github::Config>,
     /// GitHub Actions OIDC (`GITHUB_OWNER_ID`, `GITHUB_OIDC_AUDIENCE`, `GITHUB_OIDC_RULES`).
-    pub oidc: Option<oidc::Config>,
+    oidc: Option<oidc::Config>,
 }
 
 impl Config {
-    pub fn from_env(env: &Env) -> std::result::Result<Self, AuthError> {
+    fn from_env(env: &Env) -> std::result::Result<Self, AuthError> {
         Self::from_vars(|name| {
             env.var(name)
                 .ok()
@@ -209,48 +210,10 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// Per-isolate cache of auth results, keyed by the SHA-256 of the credential
-/// so raw tokens are never stored.
-pub struct TtlCache<V> {
-    entries: HashMap<[u8; 32], (u64, V)>,
-}
-
-impl<V: Clone> TtlCache<V> {
-    /// Upper bound on entries, so a flood of distinct credentials can't grow
-    /// the isolate's memory without limit.
-    const MAX_ENTRIES: usize = 1024;
-
-    pub fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-        }
-    }
-
-    pub fn key(credential: &str) -> [u8; 32] {
-        Sha256::digest(credential.as_bytes()).into()
-    }
-
-    pub fn get(&self, key: &[u8; 32], now_ms: u64) -> Option<V> {
-        self.entries
-            .get(key)
-            .filter(|(expires_at, _)| now_ms < *expires_at)
-            .map(|(_, value)| value.clone())
-    }
-
-    pub fn insert(&mut self, key: [u8; 32], value: V, expires_at: u64, now_ms: u64) {
-        if self.entries.len() >= Self::MAX_ENTRIES {
-            self.entries
-                .retain(|_, (expires_at, _)| now_ms < *expires_at);
-        }
-        if self.entries.len() >= Self::MAX_ENTRIES {
-            self.entries.clear();
-        }
-        self.entries.insert(key, (expires_at, value));
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     fn vars(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
@@ -355,23 +318,5 @@ mod tests {
                 "rule": 0,
             })
         );
-    }
-
-    #[test]
-    fn ttl_cache_expires_entries() {
-        let mut cache = TtlCache::new();
-        let key = TtlCache::<u8>::key("token");
-        cache.insert(key, 1u8, 100, 0);
-        assert_eq!(cache.get(&key, 99), Some(1));
-        assert_eq!(cache.get(&key, 100), None);
-    }
-
-    #[test]
-    fn ttl_cache_is_bounded() {
-        let mut cache = TtlCache::new();
-        for i in 0..=TtlCache::<u8>::MAX_ENTRIES {
-            cache.insert(TtlCache::<u8>::key(&i.to_string()), 1u8, 100, 0);
-        }
-        assert!(cache.entries.len() <= TtlCache::<u8>::MAX_ENTRIES);
     }
 }

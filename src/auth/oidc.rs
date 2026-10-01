@@ -11,9 +11,9 @@ use worker::{
     wasm_bindgen_futures::JsFuture,
 };
 
-use crate::auth::{AuthError, Identity, IdentityKind, TtlCache};
+use super::{AuthError, Identity, IdentityKind, cache::TtlCache};
 
-pub const ISSUER: &str = "https://token.actions.githubusercontent.com";
+const ISSUER: &str = "https://token.actions.githubusercontent.com";
 const JWKS_URL: &str = "https://token.actions.githubusercontent.com/.well-known/jwks";
 
 /// Clock tolerance for `exp` and `nbf`.
@@ -31,18 +31,18 @@ thread_local! {
 
 /// GitHub Actions OIDC auth. Same matching semantics as cf-oidc-auth.
 #[derive(Debug)]
-pub struct Config {
+pub(super) struct Config {
     /// Numeric org/user ID (`GITHUB_OWNER_ID`), matched against
     /// `repository_owner_id` for every rule.
-    pub owner_id: String,
+    owner_id: String,
     /// Expected `aud` claim (`GITHUB_OIDC_AUDIENCE`), without a trailing `/`.
-    pub audience: String,
+    audience: String,
     /// `GITHUB_OIDC_RULES`; the first rule that matches wins.
-    pub rules: Vec<Rule>,
+    rules: Vec<Rule>,
 }
 
 impl Config {
-    pub fn parse(owner_id: &str, audience: &str, rules: &str) -> Result<Self, String> {
+    pub(super) fn parse(owner_id: &str, audience: &str, rules: &str) -> Result<Self, String> {
         if owner_id.is_empty() || !owner_id.bytes().all(|c| c.is_ascii_digit()) {
             return Err("GITHUB_OWNER_ID must be a numeric GitHub org or user ID".to_string());
         }
@@ -83,7 +83,7 @@ impl Config {
 /// claim matches. `*` matches any run of characters (including `/`) except
 /// in `*_id` claims, which must match exactly.
 #[derive(Debug)]
-pub struct Rule(BTreeMap<String, String>);
+struct Rule(BTreeMap<String, String>);
 
 impl Rule {
     fn parse(index: usize, raw: Map<String, Value>) -> Result<Self, String> {
@@ -277,7 +277,7 @@ fn check_claims(
 }
 
 /// Verifies a GitHub Actions OIDC token and matches it against the rules.
-pub async fn authorize(config: &Config, jwt: &str) -> Result<Identity, AuthError> {
+pub(super) async fn authorize(config: &Config, jwt: &str) -> Result<Identity, AuthError> {
     let now_ms = Date::now().as_millis();
     let key = TtlCache::<()>::key(jwt);
     if let Some(result) = CACHE.with_borrow(|cache| cache.get(&key, now_ms)) {

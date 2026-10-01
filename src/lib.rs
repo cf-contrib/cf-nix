@@ -1,9 +1,7 @@
 use std::{borrow::Cow, fmt::Write};
 
 mod auth;
-mod github;
 mod model;
-mod oidc;
 
 use model::{NarInfoContext, NarInfoSigKey, Validate};
 use narinfo::*;

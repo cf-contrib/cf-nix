@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use serde::Deserialize;
 use worker::{Date, Fetch, Headers, Method, Request, RequestInit, Response};
 
-use crate::auth::{AuthError, Identity, IdentityKind, TtlCache};
+use super::{AuthError, Identity, IdentityKind, cache::TtlCache};
 
 const API_URL: &str = "https://api.github.com";
 
@@ -17,13 +17,13 @@ thread_local! {
 
 /// GitHub user token auth: anyone with push access to `repository` can upload.
 #[derive(Debug)]
-pub struct Config {
+pub(super) struct Config {
     /// `owner/repo` (`GITHUB_REPOSITORY`).
-    pub repository: String,
+    repository: String,
 }
 
 impl Config {
-    pub fn parse(repository: &str) -> Result<Self, String> {
+    pub(super) fn parse(repository: &str) -> Result<Self, String> {
         let valid_part = |part: &str| {
             !part.is_empty()
                 && part
@@ -58,7 +58,7 @@ struct Permissions {
 
 /// Checks that `token` belongs to a GitHub user with push access to the
 /// configured repository.
-pub async fn authorize(config: &Config, token: &str) -> Result<Identity, AuthError> {
+pub(super) async fn authorize(config: &Config, token: &str) -> Result<Identity, AuthError> {
     reject_installation_token(token)?;
 
     let key = TtlCache::<()>::key(token);
