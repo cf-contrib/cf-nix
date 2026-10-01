@@ -1,154 +1,17 @@
 # cf-nix-cache
 
-> Stop babysitting a Nix cache server. Deploy this Worker, point `nix.conf` at it, and substitutes come from Cloudflare's edge.
+> A Nix binary cache on Cloudflare Workers and R2: substitutes come from
+> Cloudflare's edge, and uploads authenticate with GitHub identity, so there's
+> no shared upload secret to store or rotate.
 
 [![CI](https://github.com/cf-contrib/cf-nix-cache/actions/workflows/ci.yml/badge.svg)](https://github.com/cf-contrib/cf-nix-cache/actions/workflows/ci.yml)
 [![Rust (edition 2021)](https://img.shields.io/badge/Rust-2021-black?logo=rust)](https://www.rust-lang.org/)
 [![Nix Flake](https://img.shields.io/badge/Nix-Flake-5277C3?logo=nixos&logoColor=white)](https://nixos.wiki/wiki/Flakes)
 [![License: MIT](https://img.shields.io/github/license/cf-contrib/cf-nix-cache)](LICENSE)
 
-A [Nix](https://nixos.org/) binary cache that runs on Cloudflare Workers and R2. Written in Rust.
-
-## Why a Worker, not direct R2/S3?
-
-Nix supports S3-compatible binary caches natively via the
-[`s3://`](https://nix.dev/manual/nix/2.23/store/types/s3-binary-cache-store)
-store type, and R2 speaks the S3 API. You can also put a public R2 bucket
-behind a custom domain and use Nix's
-[HTTP Binary Cache Store](https://nix.dev/manual/nix/2.23/store/types/http-binary-cache-store)
-for anonymous reads. Both are simpler than running this Worker.
-
-What you get on top of `s3://`:
-
-- Uploaders authenticate as themselves, not with AWS access keys: people with their GitHub token, GitHub Actions with its OIDC token. The `s3://` store uses the AWS default credential provider chain, so every uploader needs a key pair.
-- Server-side narinfo signing. The Worker holds the Nix signing key and signs uploads itself; the key never has to live on a CI runner's `secret-key-files`.
-- Upload validation. The Worker parses each narinfo, checks the format, binds the StorePath to the request route, and rejects anything unsigned. `s3://` is opaque blob storage.
-- `POST /` mass-query in one request. The HTTP Binary Cache protocol supports it; `s3://` falls back to one HEAD per path.
-
-If none of that matters to you, `s3://` to R2 is less code to maintain.
-
-Also: this is a hobby project. I wanted an excuse to spend more time with Cloudflare Workers and Rust, and a Nix cache made a good target.
-
-## Table of contents
-
-- [Why a Worker, not direct R2/S3?](#why-a-worker-not-direct-r2s3)
-- [Features](#features)
-- [How it works](#how-it-works)
-- [Quick start](#quick-start)
-- [Authentication](#authentication)
-- [HTTP API](#http-api)
-- [Configuration](#configuration)
-- [Deployment](#deployment)
-- [Development](#development)
-- [Dependencies](#dependencies)
-- [License](#license)
-
-## Features
-
-- Speaks the same protocol as `cache.nixos.org`.
-- Reads come from Cloudflare's edge.
-- Storage lives in R2 (no egress to Workers).
-- Uploads authorized by GitHub identity: push access to a repo for people, claim rules for GitHub Actions OIDC.
-- Optional Ed25519 signing of narinfo on the server.
-- One Worker bundle: `index.js` plus `index_bg.wasm`.
-
-## How it works
-
-```mermaid
-flowchart LR
-    client["nix client"]
-    worker["Worker (CF)"]
-    bucket[("R2 bucket")]
-    uploader["uploader<br/>(nix copy …)"]
-
-    client -- "GET /#lt;hash#gt;.narinfo" --> worker
-    worker -- "narinfo + .nar" --> client
-    worker -- "R2 GET / PUT" --> bucket
-    bucket -- "object" --> worker
-    uploader -- "PUT (Basic auth)" --> worker
-```
-
-Reads are public. Uploads need HTTP Basic credentials (see [Authentication](#authentication)). Everything lives in one R2 bucket.
-
-## Quick start
-
-### 1. Configure your Nix client
-
-Add the deployed Worker URL to your `nix.conf`:
-
-```ini
-substituters = https://<your-worker>.workers.dev https://cache.nixos.org
-trusted-public-keys = <your-key-name>:<base64-public-key> cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
-```
-
-### 2. Push a store path
-
-Put your credentials in a netrc file (see [Authentication](#authentication)), point Nix at it from `nix.conf`:
-
-```ini
-netrc-file = /home/you/.netrc
-```
-
-and push:
-
-```bash
-nix copy --to https://<your-worker>.workers.dev /nix/store/<hash>-<name>
-```
-
-### 3. Pull on another machine
-
-```bash
-nix build nixpkgs#hello  # served from the Worker if cached
-```
-
-## Authentication
-
-Reads are public. Uploads (`PUT`) and `GET /auth/whoami` need HTTP Basic credentials, and the username picks how the Worker checks the password:
-
-| Username       | Password                              | The Worker checks                                                       | Enabled by                                                       |
-| -------------- | ------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `github`       | A GitHub user token (`gh auth token`) | The user has push access to `CF_NIX_WORKER_GITHUB_REPOSITORY`                         | `CF_NIX_WORKER_GITHUB_REPOSITORY`                                              |
-| `oidc`         | A GitHub Actions OIDC token           | Signature, issuer, audience, expiry and owner, then `CF_NIX_WORKER_GITHUB_OIDC_RULES` | `CF_NIX_WORKER_GITHUB_OWNER_ID`, `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE`, `CF_NIX_WORKER_GITHUB_OIDC_RULES`   |
-
-A mechanism is off unless its variables are set. With none set, every upload gets `401`. An invalid configuration, such as only some of the OIDC variables, fails closed: uploads get `500` and the reason is logged.
-
-Every upload is logged with the identity it resolved to. To check your credentials before a long `nix copy`:
-
-```bash
-curl --netrc-file ~/.netrc https://<your-worker>.workers.dev/auth/whoami
-# {"kind":"github","subject":"octocat"}
-```
-
-In GitHub Actions, the [cf-nix-cache action](packages/cf-nix-action) sets up the `oidc` credentials for you. For people, [gh-nix](https://github.com/gh-extensions/gh-nix) is a planned `gh` extension that will set up the `github` credentials ([gh-extensions/gh-nix#1](https://github.com/gh-extensions/gh-nix/issues/1)). Until it ships, write the netrc entry by hand as below.
-
-### People: GitHub token
-
-Anyone with push access to `CF_NIX_WORKER_GITHUB_REPOSITORY` can upload with their own GitHub token. To manage access by team, give the team write access to that repo. The default `gh` token works, and so does nix-auth's. A fine-grained token needs access to that repo.
-
-```
-machine <your-worker>.workers.dev
-  login github
-  password <output of gh auth token>
-```
-
-The Worker checks the token with the GitHub API and reuses the result for 5 minutes, keyed by a hash of the token. Tokens are never stored or logged. Removing someone's push access takes effect within those 5 minutes.
-
-GitHub App installation tokens (`ghs_…`, including `GITHUB_TOKEN` in Actions) are rejected. They identify a repo rather than a person, can't be limited to a branch, and fork pull requests get one too. Use OIDC in CI.
-
-### CI: GitHub Actions OIDC
-
-`CF_NIX_WORKER_GITHUB_OIDC_RULES` is a JSON array of rules, and a token is accepted if any rule matches. Within a rule every claim must match. `*` matches any run of characters, including `/`, except in `*_id` claims, which must match exactly. A claim missing from the token never matches.
-
-```json
-[
-  { "repository_id": "200000002", "ref": "refs/heads/main" },
-  { "repository": "example-org/*", "environment": "release" }
-]
-```
-
-Every token must also come from a repo owned by `CF_NIX_WORKER_GITHUB_OWNER_ID`, because GitHub issues OIDC tokens to every repository on github.com. The token's audience must equal `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE` (a trailing `/` is ignored). The audience can't be GitHub's default `https://github.com/<owner>`, so a token requested for AWS or GCP doesn't work here.
-
-In a workflow, the [cf-nix-cache action](packages/cf-nix-action) gets the job's OIDC token, checks it against `/auth/whoami`, and points Nix at a netrc file holding it:
+> [!NOTE]
+> **Pre-1.0.** The Worker's bindings, the module's inputs and the action's
+> inputs may still change between minor versions.
 
 ```yaml
 permissions:
@@ -156,107 +19,85 @@ permissions:
   id-token: write
 
 steps:
-  # ... build ...
+  - run: nix build .#app
   - uses: cf-contrib/cf-nix-cache@v0.3.0 # x-release-please-version
     with:
-      cache-url: https://<your-worker>.workers.dev
-  - run: nix copy --to https://<your-worker>.workers.dev ./result
+      cache-url: https://cf-nix-cache.example.workers.dev
+  - run: nix copy --to 'https://cf-nix-cache.example.workers.dev?compression=none' ./result
 ```
 
-GitHub OIDC tokens expire 5 minutes after they're issued, and the lifetime can't be changed. The action rewrites the netrc with a fresh token every 4 minutes for the rest of the job, and Nix reads the netrc again for every request, so long uploads keep working.
+| Component | Ships as | What it is |
+|---|---|---|
+| [Worker](packages/cf-nix-worker) | `index.js` + `index_bg.wasm` in [Releases](https://github.com/cf-contrib/cf-nix-cache/releases) | The cache, written in Rust. Serves narinfo and NARs from R2, validates and signs uploads, and authorizes uploaders by their GitHub identity. |
+| [Terraform module](packages/cf-nix-worker/terraform) | `source = "git::…//packages/cf-nix-worker/terraform?ref=<version>"` | Deploys the released Worker with its R2 bucket and bindings. The signing key comes from Secrets Store. |
+| [Action](packages/cf-nix-action) | `uses: cf-contrib/cf-nix-cache@<version>` | Sets up a job's OIDC credentials for `nix copy`, and keeps them fresh during long uploads. No runtime dependencies. |
 
-## HTTP API
+The Worker, the module and the action are released together from one tag.
 
-| Method | Path              | Auth   | Description                                |
-| ------ | ----------------- | ------ | ------------------------------------------ |
-| `GET`  | `/nix-cache-info` | public | Cache metadata (priority, etc.).           |
-| `GET`  | `/<hash>.narinfo` | public | Narinfo for a store path.                  |
-| `HEAD` | `/<hash>.narinfo` | public | Existence check for a narinfo (200 / 404). |
-| `PUT`  | `/<hash>.narinfo` | basic  | Upload a narinfo.                          |
-| `GET`  | `/nar/<hash>.nar` | public | NAR archive bytes.                         |
-| `HEAD` | `/nar/<hash>.nar` | public | Existence check for a NAR (200 / 404).     |
-| `PUT`  | `/nar/<hash>.nar` | basic  | Upload a NAR archive.                      |
-| `GET`  | `/auth/whoami`    | basic  | The identity the credentials resolve to.   |
+## How it works
 
-**Auth:** HTTP Basic, see [Authentication](#authentication). `401` means missing or invalid credentials, `403` means valid credentials without upload access, and `502` means the GitHub API or GitHub's signing keys couldn't be reached.
+```mermaid
+sequenceDiagram
+    participant Reader as nix (substitute)
+    participant Uploader as nix copy
+    participant Worker as cf-nix-cache Worker
+    participant GitHub as GitHub
+    participant R2 as R2 bucket
 
-**Signing:** every stored narinfo carries a `Sig:`. If the uploader didn't sign and `CF_NIX_WORKER_SECRET` is set, the Worker signs the upload itself. Otherwise the PUT returns `400`.
-
-## Configuration
-
-### Environment variables
-
-| Variable             | Required    | Description                                                                                                      |
-| -------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------- |
-| `CF_NIX_WORKER_GITHUB_REPOSITORY`  | for `github` | `owner/repo`. Users with push access to it can upload.                                                         |
-| `CF_NIX_WORKER_GITHUB_OWNER_ID`    | for `oidc`  | Numeric ID of the GitHub org or user whose repos may upload (`gh api orgs/<org> --jq .id`, or `users/<user>`).   |
-| `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE` | for `oidc` | Expected `aud` of the OIDC token, e.g. the cache URL. Can't be GitHub's default.                               |
-| `CF_NIX_WORKER_GITHUB_OIDC_RULES`  | for `oidc`  | JSON array of claim rules; see [CI: GitHub Actions OIDC](#ci-github-actions-oidc).                               |
-| `CF_NIX_WORKER_SECRET`         | conditional | `<key-name>:<base64>` — base64 decodes to 64 Ed25519 secret-key bytes (as emitted by `nix key generate-secret`). Required unless every uploader sends pre-signed narinfo. A Secrets Store binding in production (the Terraform module binds it that way); a plain secret or var also works, e.g. for `wrangler dev`. |
-
-### Bindings
-
-| Binding      | Type      | Description                           |
-| ------------ | --------- | ------------------------------------- |
-| `CF_NIX_WORKER_BUCKET` | R2 bucket | Stores `.narinfo` and `.nar` objects. |
-
-## Deployment
-
-Use the Terraform / OpenTofu module in [`packages/cf-nix-worker/terraform`](packages/cf-nix-worker/terraform). It deploys the Worker bundle from this repo's GitHub Releases to Workers + R2, binds the signing key from Secrets Store so it never enters Terraform state, and sets the auth bindings:
-
-```hcl
-module "cf_nix_cache" {
-  source = "git::https://github.com/cf-contrib/cf-nix-cache.git//packages/cf-nix-worker/terraform?ref=v0.3.0" # x-release-please-version
-
-  account_id         = var.account_id
-  hostname           = "cf-nix-cache.example.workers.dev"
-  bucket_name        = "nix-cache"
-  signing_key_secret = { secret_store_id = var.secret_store_id, secret_name = "cf-nix-cache-signing-key" }
-  github_repository  = "example-org/nix-cache-access"
-}
+    Reader->>Worker: GET narinfo / NAR (public)
+    Worker->>R2: get
+    Worker-->>Reader: object
+    Uploader->>Worker: PUT, Basic github:token or oidc:jwt
+    Worker->>GitHub: push access (API) or JWT signature (JWKS), cached
+    Worker->>Worker: validate narinfo, sign it if unsigned
+    Worker->>R2: put
 ```
 
-See the [module's README](packages/cf-nix-worker/terraform#readme) for every input, and for migrating from the old `examples/terraform`.
+Reads are public. For uploads, the HTTP Basic username picks the check:
 
-Each release publishes `index.js` and `index_bg.wasm`. Both are required, because `index.js` imports `./index_bg.wasm` at runtime.
+- **`github`**: a person's GitHub token, allowed with push access to one repo. Manage who can upload with that repo's collaborators and teams.
+- **`oidc`**: a GitHub Actions OIDC token, allowed when it comes from your org and matches a claim rule (repo, branch, environment, …).
 
-> `packages/cf-nix-worker/wrangler.toml` is for local testing, not production.
+The only long-lived secret is the narinfo signing key, in Secrets Store. See the [Worker's README](packages/cf-nix-worker#authentication) for the details.
+
+## Do you need it?
+
+Nix supports S3-compatible caches natively with the [`s3://`](https://nix.dev/manual/nix/2.23/store/types/s3-binary-cache-store) store, and R2 speaks the S3 API.
+
+| Approach | Upload credentials | Signing key | Notes |
+|---|---|---|---|
+| `s3://` to R2 | An S3 key pair per uploader | On every uploader (`secret-key-files`) | Nix built-in; opaque blob storage |
+| Public R2 bucket + `s3://` uploads | An S3 key pair per uploader | On every uploader | Anonymous reads via a custom domain |
+| **cf-nix-cache** | **GitHub identity, or the job's OIDC token** | **In the Worker (Secrets Store)** | Validates narinfo; one-request mass query |
+
+If S3 keys on every uploader are acceptable to you, `s3://` to R2 is less to run.
+
+Also: this is a hobby project. I wanted an excuse to spend more time with Cloudflare Workers and Rust, and a Nix cache made a good target.
+
+## Quick start
+
+1. **Create the signing key.** Generate it with `nix key generate-secret --key-name cache.example.com-1` and store it in Secrets Store. Clients need its public key (`nix key convert-secret-to-public`).
+2. **Deploy the Worker** with the [Terraform module](packages/cf-nix-worker/terraform), on workers.dev (a custom domain is optional), then check that `<cache-url>/nix-cache-info` responds.
+3. **Point Nix at it** in `nix.conf`:
+   ```ini
+   substituters = https://cf-nix-cache.example.workers.dev https://cache.nixos.org
+   trusted-public-keys = cache.example.com-1:<base64-public-key> cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+   ```
+4. **Upload.** In CI, add the [action](packages/cf-nix-action) to a job with `permissions: id-token: write`. People put their GitHub token in a netrc file; see the [Worker's README](packages/cf-nix-worker#people-github-token). Either way, push with `nix copy --to 'https://<cache>?compression=none' <paths>`: the cache stores uncompressed NARs.
 
 ## Development
 
-The Worker crate lives in [`packages/cf-nix-worker`](packages/cf-nix-worker), in a Cargo workspace. The Nix flake gives you a dev shell with the tooling already pinned:
+Everything runs inside the dev shell (`nix develop`), which pins Rust, `worker-build`, `wrangler`, OpenTofu and Node.
 
-```bash
-nix develop -c cargo test           # run the unit tests (from the repo root)
-
-cd packages/cf-nix-worker
-nix develop -c worker-build --dev   # build the Worker bundle into ./build
-nix develop -c wrangler dev         # serve locally via wrangler
+```sh
+nix develop -c cargo test                                     # the Worker's unit tests
+(cd packages/cf-nix-action && nix develop -c npm test)       # the action's tests
+(cd packages/cf-nix-worker/terraform && nix develop -c sh -c "tofu init -backend=false && tofu test")   # the module's tests
 ```
 
-The integration tests run against `wrangler dev`, from `packages/cf-nix-worker`. Uploads need a GitHub token with push access to the `CF_NIX_WORKER_GITHUB_REPOSITORY` in `wrangler.toml`:
+Each package's README has the rest: the [Worker](packages/cf-nix-worker#development) (bundle, `wrangler dev`, integration tests), the [action](packages/cf-nix-action#development) and the [module](packages/cf-nix-worker/terraform#development).
 
-```bash
-CF_NIX_WORKER_GITHUB_TOKEN=$(gh auth token) nix develop -c cargo test --features integration
-```
-
-## Dependencies
-
-Runtime crates:
-
-- [`worker`](https://crates.io/crates/worker) and [`worker-macros`](https://crates.io/crates/worker-macros), the Cloudflare Workers Rust SDK
-- [`narinfo`](https://crates.io/crates/narinfo) for parsing and serializing `.narinfo`
-- [`http-auth-basic`](https://crates.io/crates/http-auth-basic) for the auth header
-- [`serde`](https://crates.io/crates/serde) and [`serde_json`](https://crates.io/crates/serde_json) for OIDC claims, rules and GitHub API responses
-- [`web-sys`](https://crates.io/crates/web-sys) for WebCrypto, which verifies OIDC token signatures
-- [`ed25519-dalek`](https://crates.io/crates/ed25519-dalek), [`sha2`](https://crates.io/crates/sha2), and [`base64`](https://crates.io/crates/base64) for signing and validation
-
-Tooling:
-
-- Nix, for the dev shell
-- `worker-build` (from Cloudflare's `workers-rs`) for the JS + WASM bundle
-- `wrangler` for local testing
-- Terraform for production
+Releases are cut by release-please from Conventional Commits. Each release is tagged `vX.Y.Z` and attaches `index.js` and `index_bg.wasm`. Pin the action and the module to a release tag or its commit SHA: before 1.0 there is no floating major tag, because minor releases may break.
 
 ## License
 

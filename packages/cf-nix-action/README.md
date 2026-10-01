@@ -17,12 +17,12 @@ steps:
   - uses: cf-contrib/cf-nix-cache@v0.3.0 # x-release-please-version
     with:
       cache-url: https://cf-nix-cache.example.workers.dev
-  - run: nix copy --to https://cf-nix-cache.example.workers.dev ./result
+  - run: nix copy --to 'https://cf-nix-cache.example.workers.dev?compression=none' ./result
 ```
 
-The Worker must allow the job: its `CF_NIX_WORKER_GITHUB_OWNER_ID` must own the
+The cache stores uncompressed NARs, hence `?compression=none`. The Worker must allow the job: its `CF_NIX_WORKER_GITHUB_OWNER_ID` must own the
 repo, and one of its `CF_NIX_WORKER_GITHUB_OIDC_RULES` must match the job's
-claims. See the root README's [CI: GitHub Actions OIDC](../../README.md#ci-github-actions-oidc).
+claims. See the Worker's [CI: GitHub Actions OIDC](../cf-nix-worker#ci-github-actions-oidc).
 
 ## Inputs
 
