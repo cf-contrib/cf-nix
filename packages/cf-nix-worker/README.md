@@ -10,9 +10,19 @@ for a GitHub Actions OIDC token.
 
 ## Deploy
 
-Use the [Terraform / OpenTofu module](terraform). It deploys the released
-bundle (`index.js` and `index_bg.wasm`, both required, because `index.js`
-imports `./index_bg.wasm`), creates the R2 bucket, and sets the bindings below.
+1. **Create the signing key** and store it in [Secrets Store](https://developers.cloudflare.com/secrets-store/), so it never passes through your deploy tooling. Wrangler prompts for the value: paste the whole `<key-name>:<base64>` line.
+   ```sh
+   nix key generate-secret --key-name cache.example.com-1
+   wrangler secrets-store secret create <store-id> --name cf-nix-cache-signing-key --scopes workers --remote
+   ```
+   Clients need the matching public key in `trusted-public-keys` (`nix key convert-secret-to-public`).
+2. **Look up numeric IDs** for OIDC rules. Pin IDs, not names, because a deleted repo or org name can be re-registered by someone else:
+   ```sh
+   gh api orgs/<org> --jq .id           # github_owner_id
+   gh api repos/<org>/<repo> --jq .id   # repository_id in a rule
+   ```
+3. **Deploy** the released bundle with the [Terraform / OpenTofu module](terraform) (`//packages/cf-nix-worker/terraform?ref=<version>`). It downloads the release (`index.js` and `index_bg.wasm`, both required), creates the R2 bucket, and sets up the bindings below and the workers.dev URL (or an optional custom domain). To deploy a local build instead, run `worker-build --release` here and point the module's `bundle_dir` at `build/`.
+4. **Check** that `<cache-url>/healthz` returns `200`. A `500` means the auth config is invalid, the bucket isn't bound, or the signing key can't be read or parsed; the reason is in Workers Logs.
 
 `wrangler.toml` in this directory is for local development, not production.
 
@@ -42,7 +52,7 @@ Every upload is logged with the identity it resolved to. To check your
 credentials before a long `nix copy`:
 
 ```bash
-curl --netrc-file ~/.netrc https://<your-worker>.workers.dev/auth/whoami
+curl --netrc-file ~/.netrc https://<your-worker>.workers.dev/v1/auth/whoami
 # {"kind":"github","subject":"octocat"}
 ```
 
@@ -102,7 +112,7 @@ ignored). The audience can't be GitHub's default `https://github.com/<owner>`,
 so a token requested for AWS or GCP doesn't work here.
 
 In a workflow, the [action](../cf-nix-action) sets this up: it gets the job's
-OIDC token, checks it against `/auth/whoami`, points Nix at a netrc file holding
+OIDC token, checks it against `/v1/auth/whoami`, points Nix at a netrc file holding
 it, and refreshes it every 4 minutes. GitHub OIDC tokens expire after 5 minutes,
 and Nix reads the netrc again for every request, so long uploads keep working.
 
@@ -118,7 +128,8 @@ and Nix reads the netrc again for every request, so long uploads keep working.
 | `GET` | `/nar/<hash>.nar` | public | NAR archive bytes. |
 | `HEAD` | `/nar/<hash>.nar` | public | Existence check for a NAR (200 / 404). |
 | `PUT` | `/nar/<hash>.nar` | basic | Upload a NAR archive. |
-| `GET` | `/auth/whoami` | basic | `{ kind, subject, rule? }`: the identity the credentials resolve to. |
+| `GET` | `/v1/auth/whoami` | basic | `{ kind, subject, rule? }`: the identity the credentials resolve to. |
+| `GET` | `/healthz` | public | `200` if the bindings and auth config are valid, else `500`. Never shows the config. |
 
 **Errors:** `401` means missing or invalid credentials, `403` valid credentials
 without upload access, `500` an invalid auth configuration, and `502` that the

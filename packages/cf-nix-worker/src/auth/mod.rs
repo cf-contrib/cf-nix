@@ -10,7 +10,7 @@ mod oidc;
 
 /// The identity an authorized request was resolved to.
 ///
-/// Returned by `GET /auth/whoami` and logged for every upload.
+/// Returned by `GET /v1/auth/whoami` and logged for every upload.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Identity {
     pub kind: IdentityKind,
@@ -150,6 +150,15 @@ impl Credential {
                 "unknown username: use github or oidc".to_string(),
             )),
         }
+    }
+}
+
+/// Checks that the auth config is valid, for `GET /healthz`.
+pub fn check_config(env: &Env) -> std::result::Result<(), String> {
+    match Config::from_env(env) {
+        Ok(_) => Ok(()),
+        Err(AuthError::Config(msg)) => Err(msg),
+        Err(err) => Err(format!("{err:?}")),
     }
 }
 

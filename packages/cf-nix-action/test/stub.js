@@ -1,5 +1,5 @@
 // @ts-check
-// Stands in for both the runner's OIDC endpoint and the cache's /auth/whoami.
+// Stands in for both the runner's OIDC endpoint and the cache's /v1/auth/whoami.
 // Tokens are `stub.<base64url audience>.<n>`, so tests can tell refreshed
 // tokens apart and the cache can reject a wrong audience.
 // Run directly (smoke test) or import startStub() (unit tests).
@@ -28,7 +28,7 @@ export function startStub({ port = 0, audience, failures = 0 } = {}) {
       return json(200, { value: `stub.${aud}.${issued}` });
     }
 
-    if (url.pathname === "/auth/whoami") {
+    if (url.pathname === "/v1/auth/whoami") {
       const header = req.headers.authorization ?? "";
       const [user, token = ""] = Buffer.from(header.replace(/^Basic /, ""), "base64").toString().split(":");
       const [, aud = ""] = token.split(".");

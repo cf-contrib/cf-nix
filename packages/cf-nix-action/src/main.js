@@ -18,7 +18,7 @@ try {
 
   const subject = await whoami(cache, token);
   if (subject === undefined) {
-    warning(`cf-nix-cache: ${cache.origin} has no /auth/whoami, so the credentials weren't checked`);
+    warning(`cf-nix-cache: ${cache.origin} has no /v1/auth/whoami, so the credentials weren't checked`);
   } else {
     console.log(`cf-nix-cache: authenticated to ${cache.origin} as ${subject}`);
   }
