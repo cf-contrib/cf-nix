@@ -47,7 +47,7 @@ describe("netrc", () => {
   it("uses the oidc username for the cache host", () => {
     assert.equal(
       netrcEntry(cache, "jwt"),
-      "machine cf-nix-cache.example.workers.dev\n  login oidc\n  password jwt\n",
+      "machine cf-nix-cache.example.workers.dev\n  login actions\n  password jwt\n",
     );
   });
 
@@ -115,7 +115,7 @@ describe("with a stub", () => {
 
   it("whoami explains a wrong audience", async () => {
     const token = await idToken("https://other.example.com", { env: env() });
-    await assert.rejects(whoami(new URL(stub.url), token), /401 \(invalid OIDC token.*\): .*CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE/);
+    await assert.rejects(whoami(new URL(stub.url), token), /401 \(invalid OIDC token: aud doesn't match CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE\): the cache rejected/);
   });
 
   it("whoami is skipped for a cache without the endpoint", async () => {

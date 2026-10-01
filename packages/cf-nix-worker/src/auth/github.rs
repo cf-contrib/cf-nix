@@ -83,7 +83,7 @@ fn reject_installation_token(token: &str) -> Result<(), AuthError> {
     if token.starts_with("ghs_") {
         return Err(AuthError::Unauthorized(
             "GitHub App installation tokens (including GITHUB_TOKEN) are not accepted; \
-             in GitHub Actions use the oidc username with an Actions OIDC token"
+             in GitHub Actions use the actions username with an Actions OIDC token"
                 .to_string(),
         ));
     }
@@ -118,7 +118,7 @@ async fn check(config: &Config, token: &str) -> Result<Identity, AuthError> {
     }
 
     Ok(Identity {
-        kind: IdentityKind::Github,
+        kind: IdentityKind::Users,
         subject: user.login,
         rule: None,
     })

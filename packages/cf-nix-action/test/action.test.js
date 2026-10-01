@@ -88,7 +88,7 @@ describe("action", () => {
     assert.equal(commands(files.GITHUB_ENV).NIX_CONFIG, `substituters = https://cache.nixos.org\nnetrc-file = ${state.netrc}`);
 
     const first = readFileSync(state.netrc, "utf8");
-    assert.match(first, /^machine 127\.0\.0\.1\n {2}login oidc\n {2}password stub\.[^.]+\.\d+\n$/);
+    assert.match(first, /^machine 127\.0\.0\.1\n {2}login actions\n {2}password stub\.[^.]+\.\d+\n$/);
     assert.equal(statSync(state.netrc).mode & 0o777, 0o600);
 
     // The refresher outlives main.js and replaces the token.

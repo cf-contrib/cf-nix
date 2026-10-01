@@ -46,7 +46,7 @@ sequenceDiagram
     Reader->>Worker: GET narinfo / NAR (public)
     Worker->>R2: get
     Worker-->>Reader: object
-    Uploader->>Worker: PUT, Basic github:token or oidc:jwt
+    Uploader->>Worker: PUT, Basic users:token or actions:jwt
     Worker->>GitHub: push access (API) or JWT signature (JWKS), cached
     Worker->>Worker: validate narinfo, sign it if unsigned
     Worker->>R2: put
@@ -54,8 +54,8 @@ sequenceDiagram
 
 Reads are public. For uploads, the HTTP Basic username picks the check:
 
-- **`github`**: a person's GitHub token, allowed with push access to one repo. Manage who can upload with that repo's collaborators and teams.
-- **`oidc`**: a GitHub Actions OIDC token, allowed when it comes from your org and matches a claim rule (repo, branch, environment, …).
+- **`users`**: a person's GitHub token, allowed with push access to one repo. Manage who can upload with that repo's collaborators and teams.
+- **`actions`**: a GitHub Actions OIDC token, allowed when it comes from your org and matches a claim rule (repo, branch, environment, …).
 
 The only long-lived secret is the narinfo signing key, in Secrets Store. See the [Worker's README](packages/cf-nix-worker#authentication) for the details.
 

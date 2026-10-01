@@ -33,7 +33,7 @@ jobs:
           nix develop --command tofu test
 
   # Runs the action from a fresh checkout with nothing installed, against a stub
-  # that stands in for the runner's OIDC endpoint and the cache's /v1/auth/whoami.
+  # that stands in for the runner's OIDC endpoint and the cache's /v1/whoami.
   # Catches broken action.yml paths, and checks that the token refresher keeps
   # running into later steps.
   smoke:
@@ -66,7 +66,7 @@ jobs:
           test "$SUBJECT" = repo:example-org/app:ref:refs/heads/main
           test "$NIX_CONFIG" = "netrc-file = $NETRC"
           test "$(stat -c %a "$NETRC")" = 600
-          grep -q '^  login oidc$' "$NETRC"
+          grep -q '^  login actions$' "$NETRC"
       - name: Check The Refresher Outlives Its Step
         env:
           NETRC: ${{ steps.auth.outputs.netrc-file }}

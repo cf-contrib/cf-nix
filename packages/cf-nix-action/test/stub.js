@@ -1,5 +1,5 @@
 // @ts-check
-// Stands in for both the runner's OIDC endpoint and the cache's /v1/auth/whoami.
+// Stands in for both the runner's OIDC endpoint and the cache's /v1/whoami.
 // Tokens are `stub.<base64url audience>.<n>`, so tests can tell refreshed
 // tokens apart and the cache can reject a wrong audience.
 // Run directly (smoke test) or import startStub() (unit tests).
@@ -28,16 +28,18 @@ export function startStub({ port = 0, audience, failures = 0 } = {}) {
       return json(200, { value: `stub.${aud}.${issued}` });
     }
 
-    if (url.pathname === "/v1/auth/whoami") {
+    if (url.pathname === "/v1/whoami") {
       const header = req.headers.authorization ?? "";
       const [user, token = ""] = Buffer.from(header.replace(/^Basic /, ""), "base64").toString().split(":");
       const [, aud = ""] = token.split(".");
       const expected = audience ?? `http://${req.headers.host}`;
-      if (user !== "oidc" || Buffer.from(aud, "base64url").toString() !== expected) {
-        res.writeHead(401).end("invalid OIDC token: aud doesn't match GITHUB_OIDC_AUDIENCE");
-        return;
+      if (user !== "actions" || Buffer.from(aud, "base64url").toString() !== expected) {
+        return json(401, {
+          error: "unauthorized",
+          message: "invalid OIDC token: aud doesn't match CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE",
+        });
       }
-      return json(200, { kind: "oidc", subject: "repo:example-org/app:ref:refs/heads/main", rule: 0 });
+      return json(200, { kind: "actions", subject: "repo:example-org/app:ref:refs/heads/main", rule: 0 });
     }
 
     res.writeHead(404).end();

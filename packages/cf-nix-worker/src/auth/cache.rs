@@ -60,7 +60,7 @@ mod tests {
 
     fn identity() -> Result<Identity, AuthError> {
         Ok(Identity {
-            kind: IdentityKind::Github,
+            kind: IdentityKind::Users,
             subject: "octocat".to_string(),
             rule: None,
         })

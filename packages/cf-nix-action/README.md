@@ -42,8 +42,8 @@ claims. See the Worker's [CI: GitHub Actions OIDC](../cf-nix-worker#ci-github-ac
 ## What it does
 
 1. Requests an OIDC token for `audience` (the job needs `permissions: id-token: write`) and masks it.
-2. Calls `GET <cache-url>/v1/auth/whoami` with it, and fails the step with the cache's reason on `401` or `403`. A wrong audience or a missing rule then fails here, not halfway through `nix copy`. A cache without the endpoint gets a warning.
-3. Writes `$RUNNER_TEMP/cf-nix-cache-<uuid>.netrc` (mode `0600`) with `machine <host> login oidc password <token>`, and appends `netrc-file = <path>` to `NIX_CONFIG` for the rest of the job, keeping any existing `NIX_CONFIG`.
+2. Calls `GET <cache-url>/v1/whoami` with it, and fails the step with the cache's reason on `401` or `403`. A wrong audience or a missing rule then fails here, not halfway through `nix copy`. A cache without the endpoint gets a warning.
+3. Writes `$RUNNER_TEMP/cf-nix-cache-<uuid>.netrc` (mode `0600`) with `machine <host> login actions password <token>`, and appends `netrc-file = <path>` to `NIX_CONFIG` for the rest of the job, keeping any existing `NIX_CONFIG`.
 4. With `refresh`, starts a background process that rewrites the netrc with a fresh token every 4 minutes. GitHub OIDC tokens expire 5 minutes after they're issued, and Nix reads the netrc again for every request, so uploads longer than that keep working.
 5. At job end, the post step stops the refresher, reports failed refreshes as a warning, and deletes the netrc.
 
@@ -57,4 +57,4 @@ The action has no dependencies and runs straight from the git checkout of the ta
 nix develop -c npm test   # from packages/cf-nix-action
 ```
 
-CI also runs the action with `uses: ./` against [`test/stub.js`](test/stub.js), which stands in for the runner's OIDC endpoint and the cache's `/v1/auth/whoami`.
+CI also runs the action with `uses: ./` against [`test/stub.js`](test/stub.js), which stands in for the runner's OIDC endpoint and the cache's `/v1/whoami`.
