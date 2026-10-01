@@ -26,23 +26,6 @@
         };
 
         rust-toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-
-        worker-build = pkgs.rustPlatform.buildRustPackage rec {
-          pname = "worker-build";
-          version = "0.8.3";
-          src = pkgs.fetchFromGitHub {
-            owner = "cloudflare";
-            repo = "workers-rs";
-            rev = "v${version}";
-            fetchSubmodules = true;
-            hash = "sha256-sRKQALNYUmzxaqYJCWR8b3yvqg8e4EHe1Cm7vqRx8hU=";
-          };
-          cargoHash = "sha256-enePrsTLpiTDxqnFFD38N4amOKY5oHHctPl9RFj2eRo=";
-          buildAndTestSubdir = "worker-build";
-          nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = [ pkgs.openssl ];
-          doCheck = false;
-        };
       in
       {
         devShells.default = pkgs.mkShell {
@@ -50,8 +33,8 @@
           packages = [
             pkgs.pkg-config
             pkgs.wrangler
+            pkgs.worker-build
             rust-toolchain
-            worker-build
           ];
         };
       }
