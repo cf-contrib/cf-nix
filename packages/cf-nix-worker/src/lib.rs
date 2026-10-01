@@ -19,7 +19,7 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     Router::new()
         .get("/nix-cache-info", get_nix_cache_info)
         .get_async("/healthz", get_healthz)
-        .get_async("/v1/auth/whoami", get_whoami)
+        .get_async("/v1/whoami", get_whoami)
         .post_async("/", post_mass_query)
         .head_async("/:hash", head_narinfo)
         .get_async("/:hash", get_narinfo)
@@ -31,7 +31,17 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .await
 }
 
-/// GET /v1/auth/whoami
+/// An error response in the shape shared with cf-oidc-auth:
+/// `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of a
+/// failed upload, so the message says what to fix.
+pub(crate) fn error_response(status: u16, code: &str, message: &str) -> Result<Response> {
+    Ok(
+        Response::from_json(&serde_json::json!({ "error": code, "message": message }))?
+            .with_status(status),
+    )
+}
+
+/// GET /v1/whoami
 ///
 /// Resolves the request's credentials the same way as an upload and returns
 /// the identity, so clients can check their setup before a `nix copy`.
@@ -51,7 +61,11 @@ async fn get_healthz(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
         Ok(()) => Response::ok("ok"),
         Err(reason) => {
             console_error!("unhealthy: {reason}");
-            Response::error("unhealthy", 500)
+            error_response(
+                500,
+                "misconfigured",
+                "the Worker's bindings or config are invalid; its logs have the reason",
+            )
         }
     }
 }
@@ -103,7 +117,7 @@ async fn post_mass_query(mut req: Request, ctx: RouteContext<()>) -> Result<Resp
 /// HEAD /:hash.narinfo — used by Nix uploaders to skip already-cached paths.
 async fn head_narinfo(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let Some(hash) = ctx.param("hash") else {
-        return Response::error("missing hash", 400);
+        return error_response(400, "bad_request", "missing hash");
     };
     let key = if hash.ends_with(".narinfo") {
         hash.to_string()
@@ -114,7 +128,7 @@ async fn head_narinfo(_req: Request, ctx: RouteContext<()>) -> Result<Response> 
     if bucket.head(key).await?.is_some() {
         Response::empty()
     } else {
-        Response::error("object not found", 404)
+        error_response(404, "not_found", "object not found")
     }
 }
 
@@ -126,7 +140,7 @@ async fn head_narinfo(_req: Request, ctx: RouteContext<()>) -> Result<Response> 
 /// substitution of the corresponding store path.
 async fn get_narinfo(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let Some(hash) = ctx.param("hash") else {
-        return Response::error("missing hash", 400);
+        return error_response(400, "bad_request", "missing hash");
     };
 
     let key = if hash.ends_with(".narinfo") {
@@ -137,11 +151,11 @@ async fn get_narinfo(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
 
     let bucket = ctx.env.bucket("CF_NIX_WORKER_BUCKET")?;
     let Some(object) = bucket.get(key).execute().await? else {
-        return Response::error("object not found", 404);
+        return error_response(404, "not_found", "object not found");
     };
 
     let Some(body) = object.body() else {
-        return Response::error("object has no body", 500);
+        return error_response(500, "internal_error", "object has no body");
     };
     // Served as stored: the text Nix uploaded, plus a Sig: line if the Worker
     // signed it.
@@ -167,7 +181,7 @@ async fn get_narinfo(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
 /// results from external sources.
 async fn put_narinfo(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let Some(hash) = ctx.param("hash") else {
-        return Response::error("missing hash", 400);
+        return error_response(400, "bad_request", "missing hash");
     };
 
     let key = if hash.ends_with(".narinfo") {
@@ -179,13 +193,13 @@ async fn put_narinfo(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     let body = req.text().await?;
     let info = match NarInfo::parse(&body) {
         Ok(info) => info,
-        Err(msg) => return Response::error(msg, 400),
+        Err(msg) => return error_response(400, "bad_request", &msg),
     };
     let info_ctx = NarInfoContext {
         hash: hash.strip_suffix(".narinfo").unwrap_or(hash).to_string(),
     };
     if let Err(msg) = info.validate(&info_ctx) {
-        return Response::error(msg, 400);
+        return error_response(400, "bad_request", &msg);
     }
 
     // Stored narinfo must always carry a Sig:. If the uploader didn't provide
@@ -197,21 +211,22 @@ async fn put_narinfo(mut req: Request, ctx: RouteContext<()>) -> Result<Response
         let secret = match signing_secret(&ctx.env).await {
             Ok(Some(secret)) => secret,
             Ok(None) => {
-                return Response::error(
-                    "narinfo must be signed: no Sig: provided and CF_NIX_WORKER_SECRET is not configured",
+                return error_response(
                     400,
+                    "bad_request",
+                    "narinfo must be signed: no Sig: provided and CF_NIX_WORKER_SECRET is not configured",
                 );
             }
             Err(err) => {
                 console_error!("reading CF_NIX_WORKER_SECRET failed: {err}");
-                return Response::error("server signing failure", 500);
+                return error_response(500, "misconfigured", "server signing failure");
             }
         };
         match NarInfoSigKey::parse(&secret).and_then(|key| key.sign(&info)) {
             Ok(sig) => append_sig(&body, &sig),
             Err(err) => {
                 console_error!("narinfo signing failed: {err}");
-                return Response::error("server signing failure", 500);
+                return error_response(500, "misconfigured", "server signing failure");
             }
         }
     };
@@ -239,7 +254,7 @@ async fn signing_secret(env: &Env) -> Result<Option<String>> {
 /// HEAD /nar/:hash.nar — used by Nix uploaders to skip already-cached NARs.
 async fn head_nar(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let Some(hash) = ctx.param("hash") else {
-        return Response::error("missing hash", 400);
+        return error_response(400, "bad_request", "missing hash");
     };
     let key = if hash.ends_with(".nar") {
         hash.to_string()
@@ -250,7 +265,7 @@ async fn head_nar(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     if bucket.head(key).await?.is_some() {
         Response::empty()
     } else {
-        Response::error("object not found", 404)
+        error_response(404, "not_found", "object not found")
     }
 }
 
@@ -262,7 +277,7 @@ async fn head_nar(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
 /// corresponding `.narinfo` metadata.
 async fn get_nar(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let Some(hash) = ctx.param("hash") else {
-        return Response::error("missing hash", 400);
+        return error_response(400, "bad_request", "missing hash");
     };
 
     let key = if hash.ends_with(".nar") {
@@ -273,11 +288,11 @@ async fn get_nar(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
 
     let bucket = ctx.env.bucket("CF_NIX_WORKER_BUCKET")?;
     let Some(object) = bucket.get(key).execute().await? else {
-        return Response::error("object not found", 404);
+        return error_response(404, "not_found", "object not found");
     };
 
     let Some(body) = object.body() else {
-        return Response::error("object has no body", 500);
+        return error_response(500, "internal_error", "object has no body");
     };
 
     let mut response = Response::from_body(body.response_body()?)?;
@@ -295,7 +310,7 @@ async fn get_nar(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
 /// a store path in the cache.
 async fn put_nar(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let Some(hash) = ctx.param("hash") else {
-        return Response::error("missing hash", 400);
+        return error_response(400, "bad_request", "missing hash");
     };
 
     let key = if hash.ends_with(".nar") {
@@ -306,7 +321,7 @@ async fn put_nar(req: Request, ctx: RouteContext<()>) -> Result<Response> {
 
     let body = match req.inner().body() {
         Some(stream) => stream,
-        None => return Response::error("missing body", 400),
+        None => return error_response(400, "bad_request", "missing body"),
     };
     let bucket = ctx.env.bucket("CF_NIX_WORKER_BUCKET")?;
     bucket.put(key, body).execute().await?;

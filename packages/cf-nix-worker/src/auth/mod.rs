@@ -4,19 +4,21 @@ use http_auth_basic::Credentials;
 use serde::Serialize;
 use worker::{Env, Request, Response, Result, console_error};
 
+use crate::error_response;
+
 mod cache;
 mod github;
 mod oidc;
 
 /// The identity an authorized request was resolved to.
 ///
-/// Returned by `GET /v1/auth/whoami` and logged for every upload.
+/// Returned by `GET /v1/whoami` and logged for every upload.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Identity {
     pub kind: IdentityKind,
-    /// GitHub login (`github`) or the OIDC `sub` claim (`oidc`).
+    /// GitHub login (`user`) or the OIDC `sub` claim (`actions`).
     pub subject: String,
-    /// Index of the matching `CF_NIX_WORKER_GITHUB_OIDC_RULES` entry (`oidc` only).
+    /// Index of the matching `CF_NIX_WORKER_GITHUB_OIDC_RULES` entry (`actions` only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule: Option<usize>,
 }
@@ -24,15 +26,17 @@ pub struct Identity {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum IdentityKind {
-    Github,
-    Oidc,
+    /// A person, with their GitHub user token.
+    User,
+    /// A GitHub Actions job, with its OIDC token.
+    Actions,
 }
 
 impl fmt::Display for Identity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let kind = match self.kind {
-            IdentityKind::Github => "github",
-            IdentityKind::Oidc => "oidc",
+            IdentityKind::User => "user",
+            IdentityKind::Actions => "actions",
         };
         write!(f, "{kind}:{}", self.subject)?;
         if let Some(rule) = self.rule {
@@ -60,15 +64,15 @@ impl AuthError {
     /// logged, not returned.
     pub fn into_response(self) -> Result<Response> {
         match self {
-            AuthError::Unauthorized(msg) => Response::error(msg, 401),
-            AuthError::Forbidden(msg) => Response::error(msg, 403),
+            AuthError::Unauthorized(msg) => error_response(401, "unauthorized", &msg),
+            AuthError::Forbidden(msg) => error_response(403, "forbidden", &msg),
             AuthError::Config(msg) => {
                 console_error!("auth config invalid: {msg}");
-                Response::error("auth is misconfigured", 500)
+                error_response(500, "misconfigured", "auth is misconfigured")
             }
             AuthError::Upstream(msg) => {
                 console_error!("auth upstream failure: {msg}");
-                Response::error("auth upstream failure", 502)
+                error_response(502, "upstream_error", "GitHub couldn't be reached")
             }
         }
     }
@@ -127,10 +131,10 @@ impl Config {
 /// username selects how the password is verified.
 #[derive(Debug, PartialEq)]
 enum Credential {
-    /// `github:<GitHub user token>`
-    Github(String),
-    /// `oidc:<GitHub Actions OIDC JWT>`
-    Oidc(String),
+    /// `user:<GitHub user token>`
+    User(String),
+    /// `actions:<GitHub Actions OIDC JWT>`
+    Actions(String),
 }
 
 impl Credential {
@@ -144,10 +148,10 @@ impl Credential {
         };
 
         match input.user_id.as_str() {
-            "github" => Ok(Credential::Github(input.password)),
-            "oidc" => Ok(Credential::Oidc(input.password)),
+            "user" => Ok(Credential::User(input.password)),
+            "actions" => Ok(Credential::Actions(input.password)),
             _ => Err(AuthError::Unauthorized(
-                "unknown username: use github or oidc".to_string(),
+                "unknown username: use user or actions".to_string(),
             )),
         }
     }
@@ -169,18 +173,18 @@ pub async fn authorize(req: &Request, env: &Env) -> std::result::Result<Identity
     let header = req.headers().get("Authorization").unwrap_or_default();
 
     match Credential::parse(header.as_deref())? {
-        Credential::Github(token) => {
+        Credential::User(token) => {
             let Some(config) = config.github else {
                 return Err(AuthError::Unauthorized(
-                    "github auth is not enabled".to_string(),
+                    "user auth is not enabled".to_string(),
                 ));
             };
             github::authorize(&config, &token).await
         }
-        Credential::Oidc(jwt) => {
+        Credential::Actions(jwt) => {
             let Some(config) = config.oidc else {
                 return Err(AuthError::Unauthorized(
-                    "oidc auth is not enabled".to_string(),
+                    "actions auth is not enabled".to_string(),
                 ));
             };
             oidc::authorize(&config, &jwt).await
@@ -251,14 +255,14 @@ mod tests {
     fn credential_dispatches_on_username() {
         let parse = |user, password| Credential::parse(Some(&basic(user, password)));
         assert_eq!(
-            parse("github", "gho_example"),
-            Ok(Credential::Github("gho_example".to_string()))
+            parse("user", "gho_example"),
+            Ok(Credential::User("gho_example".to_string()))
         );
         assert_eq!(
-            parse("oidc", "a.b.c"),
-            Ok(Credential::Oidc("a.b.c".to_string()))
+            parse("actions", "a.b.c"),
+            Ok(Credential::Actions("a.b.c".to_string()))
         );
-        for user in ["someone", "x-auth-token"] {
+        for user in ["someone", "x-auth-token", "github", "oidc"] {
             assert!(matches!(
                 parse(user, "secret"),
                 Err(AuthError::Unauthorized(_))
@@ -281,14 +285,14 @@ mod tests {
     #[test]
     fn identity_serializes_for_whoami() {
         let identity = Identity {
-            kind: IdentityKind::Oidc,
+            kind: IdentityKind::Actions,
             subject: "repo:example-org/app:ref:refs/heads/main".to_string(),
             rule: Some(0),
         };
         assert_eq!(
             serde_json::to_value(&identity).unwrap(),
             serde_json::json!({
-                "kind": "oidc",
+                "kind": "actions",
                 "subject": "repo:example-org/app:ref:refs/heads/main",
                 "rule": 0,
             })

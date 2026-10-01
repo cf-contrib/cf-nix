@@ -109,11 +109,11 @@ export async function idToken(audience, { attempts = 3, delay = 500, env = proce
 }
 
 /**
- * The netrc entry Nix sends to the cache: the Worker reads the `oidc`
+ * The netrc entry Nix sends to the cache: the Worker reads the `actions`
  * username as "verify the password as a GitHub Actions OIDC token".
  * @param {URL} cache @param {string} token
  */
-export const netrcEntry = (cache, token) => `machine ${cache.hostname}\n  login oidc\n  password ${token}\n`;
+export const netrcEntry = (cache, token) => `machine ${cache.hostname}\n  login actions\n  password ${token}\n`;
 
 /**
  * Writes the netrc atomically with mode 0600, so a concurrent `nix copy`
@@ -147,17 +147,21 @@ const HINTS = /** @type {Record<number, string>} */ ({
  * @param {URL} cache @param {string} token
  */
 export async function whoami(cache, token) {
-  const response = await fetch(new URL("/v1/auth/whoami", cache), {
-    headers: { authorization: `Basic ${Buffer.from(`oidc:${token}`).toString("base64")}` },
+  const response = await fetch(new URL("/v1/whoami", cache), {
+    headers: { authorization: `Basic ${Buffer.from(`actions:${token}`).toString("base64")}` },
     signal: AbortSignal.timeout(30_000),
   });
   if (response.status === 404) return undefined;
   if (!response.ok) {
-    const reason = (await response.text().catch(() => "")).trim();
+    // `{ "error": "<code>", "message": "<reason>" }`, as cf-oidc-auth's errors.
+    const { error, message } = /** @type {{ error?: string, message?: string }} */ (
+      await response.json().catch(() => ({}))
+    );
+    const reason = message ?? error;
     const hint = HINTS[response.status];
     throw new Error(`cache returned ${response.status}${reason ? ` (${reason})` : ""}${hint ? `: ${hint}` : ""}`);
   }
   const identity = /** @type {{ kind?: string, subject?: string }} */ (await response.json());
-  if (typeof identity.subject !== "string") throw new Error("cache returned an invalid /v1/auth/whoami response");
+  if (typeof identity.subject !== "string") throw new Error("cache returned an invalid /v1/whoami response");
   return identity.subject;
 }

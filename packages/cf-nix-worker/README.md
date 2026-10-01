@@ -5,7 +5,7 @@
 > uploads, and authorizes uploaders by their GitHub identity.
 
 Reads are public. Uploads need HTTP Basic credentials, and the username picks
-how the Worker checks the password: `github` for a person's GitHub token, `oidc`
+how the Worker checks the password: `user` for a person's GitHub token, `actions`
 for a GitHub Actions OIDC token.
 
 ## Deploy
@@ -32,17 +32,17 @@ for a GitHub Actions OIDC token.
 |---|---|---|---|
 | `CF_NIX_WORKER_BUCKET` | R2 bucket | yes | Stores `.narinfo` and `.nar` objects. |
 | `CF_NIX_WORKER_SECRET` | Secrets Store secret | conditional | `<key-name>:<base64>`, as emitted by `nix key generate-secret`. Required unless every uploader sends signed narinfo. A plain secret or var also works, e.g. for `wrangler dev`. |
-| `CF_NIX_WORKER_GITHUB_REPOSITORY` | var | for `github` | `owner/repo`. Users with push access to it can upload. |
-| `CF_NIX_WORKER_GITHUB_OWNER_ID` | var | for `oidc` | Numeric ID of the GitHub org or user whose repos may upload (`gh api orgs/<org> --jq .id`, or `users/<user>`). |
-| `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE` | var | for `oidc` | Expected `aud` of the OIDC token, e.g. the cache URL. Can't be GitHub's default. |
-| `CF_NIX_WORKER_GITHUB_OIDC_RULES` | var | for `oidc` | JSON array of claim rules; see [CI: GitHub Actions OIDC](#ci-github-actions-oidc). |
+| `CF_NIX_WORKER_GITHUB_REPOSITORY` | var | for `user` | `owner/repo`. Users with push access to it can upload. |
+| `CF_NIX_WORKER_GITHUB_OWNER_ID` | var | for `actions` | Numeric ID of the GitHub org or user whose repos may upload (`gh api orgs/<org> --jq .id`, or `users/<user>`). |
+| `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE` | var | for `actions` | Expected `aud` of the OIDC token, e.g. the cache URL. Can't be GitHub's default. |
+| `CF_NIX_WORKER_GITHUB_OIDC_RULES` | var | for `actions` | JSON array of claim rules; see [CI: GitHub Actions OIDC](#ci-github-actions-oidc). |
 
 ## Authentication
 
 | Username | Password | The Worker checks | Enabled by |
 |---|---|---|---|
-| `github` | A GitHub user token (`gh auth token`) | The user has push access to `CF_NIX_WORKER_GITHUB_REPOSITORY` | `CF_NIX_WORKER_GITHUB_REPOSITORY` |
-| `oidc` | A GitHub Actions OIDC token | Signature, issuer, audience, expiry and owner, then `CF_NIX_WORKER_GITHUB_OIDC_RULES` | `CF_NIX_WORKER_GITHUB_OWNER_ID`, `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE`, `CF_NIX_WORKER_GITHUB_OIDC_RULES` |
+| `user` | A GitHub user token (`gh auth token`) | The user has push access to `CF_NIX_WORKER_GITHUB_REPOSITORY` | `CF_NIX_WORKER_GITHUB_REPOSITORY` |
+| `actions` | A GitHub Actions OIDC token | Signature, issuer, audience, expiry and owner, then `CF_NIX_WORKER_GITHUB_OIDC_RULES` | `CF_NIX_WORKER_GITHUB_OWNER_ID`, `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE`, `CF_NIX_WORKER_GITHUB_OIDC_RULES` |
 
 A mechanism is off unless its bindings are set. With none set, every upload
 gets `401`. An invalid configuration, such as only some of the OIDC bindings,
@@ -52,8 +52,8 @@ Every upload is logged with the identity it resolved to. To check your
 credentials before a long `nix copy`:
 
 ```bash
-curl --netrc-file ~/.netrc https://<your-worker>.workers.dev/v1/auth/whoami
-# {"kind":"github","subject":"octocat"}
+curl --netrc-file ~/.netrc https://<your-worker>.workers.dev/v1/whoami
+# {"kind":"user","subject":"octocat"}
 ```
 
 Nix sends credentials to a binary cache only from a netrc file (`netrc-file` in
@@ -69,7 +69,7 @@ Put your token in a netrc file readable only by you (`chmod 600 ~/.netrc`):
 
 ```
 machine <your-worker>.workers.dev
-  login github
+  login user
   password <output of gh auth token>
 ```
 
@@ -112,7 +112,7 @@ ignored). The audience can't be GitHub's default `https://github.com/<owner>`,
 so a token requested for AWS or GCP doesn't work here.
 
 In a workflow, the [action](../cf-nix-action) sets this up: it gets the job's
-OIDC token, checks it against `/v1/auth/whoami`, points Nix at a netrc file holding
+OIDC token, checks it against `/v1/whoami`, points Nix at a netrc file holding
 it, and refreshes it every 4 minutes. GitHub OIDC tokens expire after 5 minutes,
 and Nix reads the netrc again for every request, so long uploads keep working.
 
@@ -128,12 +128,20 @@ and Nix reads the netrc again for every request, so long uploads keep working.
 | `GET` | `/nar/<hash>.nar` | public | NAR archive bytes. |
 | `HEAD` | `/nar/<hash>.nar` | public | Existence check for a NAR (200 / 404). |
 | `PUT` | `/nar/<hash>.nar` | basic | Upload a NAR archive. |
-| `GET` | `/v1/auth/whoami` | basic | `{ kind, subject, rule? }`: the identity the credentials resolve to. |
+| `GET` | `/v1/whoami` | basic | `{ kind, subject, rule? }`: the identity the credentials resolve to. |
 | `GET` | `/healthz` | public | `200` if the bindings and auth config are valid, else `500`. Never shows the config. |
 
-**Errors:** `401` means missing or invalid credentials, `403` valid credentials
-without upload access, `500` an invalid auth configuration, and `502` that the
-GitHub API or GitHub's signing keys couldn't be reached.
+**Errors** are JSON, in the shape cf-oidc-auth uses: `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of a failed upload, so the message says what to fix, except for `500` and `502`, whose details go only to the logs.
+
+| Status | `error` | Means |
+|---|---|---|
+| `400` | `bad_request` | The narinfo or request is invalid, e.g. `narinfo is missing NarSize` |
+| `401` | `unauthorized` | Missing or invalid credentials, or a mechanism that isn't enabled |
+| `403` | `forbidden` | Valid credentials without upload access, e.g. `octocat has no push access to …` |
+| `404` | `not_found` | No such narinfo or NAR |
+| `500` | `misconfigured` | The auth config, the bindings or the signing key are invalid |
+| `500` | `internal_error` | A stored object is unreadable |
+| `502` | `upstream_error` | The GitHub API or GitHub's signing keys couldn't be reached |
 
 **Validation and signing:** the Worker parses each uploaded narinfo, checks its
 format, and requires its `StorePath` to match the request's hash. Every stored

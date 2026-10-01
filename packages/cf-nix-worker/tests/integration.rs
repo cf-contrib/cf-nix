@@ -126,13 +126,13 @@ async fn test_get_nar_not_found() {
 
 #[tokio::test]
 async fn test_whoami_with_github_token() {
-    let resp = helper::get_with_auth("v1/auth/whoami", "github", &helper::github_token())
+    let resp = helper::get_with_auth("v1/whoami", "user", &helper::github_token())
         .await
         .expect("the request failed");
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value =
         serde_json::from_str(&resp.text().await.expect("the body failed")).unwrap();
-    assert_eq!(body["kind"], "github");
+    assert_eq!(body["kind"], "user");
     assert!(
         body["subject"]
             .as_str()
@@ -142,19 +142,23 @@ async fn test_whoami_with_github_token() {
 
 #[tokio::test]
 async fn test_whoami_without_credentials() {
-    let resp = helper::get("v1/auth/whoami")
-        .await
-        .expect("the request failed");
+    let resp = helper::get("v1/whoami").await.expect("the request failed");
     assert_eq!(resp.status(), 401);
 }
 
 #[tokio::test]
 async fn test_whoami_with_oidc_disabled() {
     // The dev config only sets CF_NIX_WORKER_GITHUB_REPOSITORY, so OIDC auth is off.
-    let resp = helper::get_with_auth("v1/auth/whoami", "oidc", "a.b.c")
+    let resp = helper::get_with_auth("v1/whoami", "actions", "a.b.c")
         .await
         .expect("the request failed");
     assert_eq!(resp.status(), 401);
+    let body: serde_json::Value =
+        serde_json::from_str(&resp.text().await.expect("the body failed")).unwrap();
+    assert_eq!(
+        body,
+        serde_json::json!({ "error": "unauthorized", "message": "actions auth is not enabled" })
+    );
 }
 
 #[tokio::test]
@@ -164,6 +168,7 @@ async fn test_put_rejects_bad_credentials() {
 
     for credentials in [
         None,
+        Some(("user", "gho_notARealToken000000000000000000000")),
         Some(("github", "gho_notARealToken000000000000000000000")),
         Some(("x-auth-token", "nix-token-dev")),
         Some(("someone", "secret")),

@@ -62,7 +62,7 @@ pub async fn put<B: Into<Body>>(
         .put(url.to_string())
         .body(content_body)
         .header("content-type", content_type)
-        .basic_auth("github", Some(github_token()))
+        .basic_auth("user", Some(github_token()))
         .send()
         .await
 }

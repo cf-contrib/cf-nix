@@ -278,7 +278,7 @@ fn check_claims(
     };
 
     Ok(Identity {
-        kind: IdentityKind::Oidc,
+        kind: IdentityKind::Actions,
         subject,
         rule: Some(rule),
     })
@@ -582,7 +582,7 @@ mod tests {
             r#"[{"ref":"refs/heads/release"},{"repository_id":"200000002","ref":"refs/heads/main"}]"#,
         );
         let identity = check_claims(&config, &claims(), NOW).expect("should match");
-        assert_eq!(identity.kind, IdentityKind::Oidc);
+        assert_eq!(identity.kind, IdentityKind::Actions);
         assert_eq!(identity.subject, "repo:example-org/app:ref:refs/heads/main");
         assert_eq!(identity.rule, Some(1));
     }
