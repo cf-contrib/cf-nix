@@ -1,8 +1,91 @@
-use std::fmt::Write;
-
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ed25519_dalek::{Signature, Signer, SigningKey as DalekSigningKey};
-use narinfo::{NarInfo, Sig};
+
+
+/// A parsed `.narinfo`, borrowing from its text.
+///
+/// Parsing follows Nix's own parser (`NarInfo::NarInfo` in libstore's
+/// `nar-info.cc`): a value starts after `": "`, the last of a duplicate key
+/// wins, `Sig` lines accumulate and unknown keys are ignored. The Worker only
+/// parses to validate and sign. It stores and serves the text Nix uploaded, so
+/// no field is ever dropped or reordered.
+#[derive(Debug, Default, PartialEq)]
+pub struct NarInfo<'a> {
+    pub store_path: &'a str,
+    pub url: &'a str,
+    pub compression: Option<&'a str>,
+    pub file_hash: Option<&'a str>,
+    pub file_size: Option<u64>,
+    pub nar_hash: &'a str,
+    pub nar_size: u64,
+    /// Store path basenames (`<hash>-<name>`). Empty when there are none.
+    pub references: Vec<&'a str>,
+    /// The `.drv` basename.
+    pub deriver: Option<&'a str>,
+    pub system: Option<&'a str>,
+    /// `<key-name>:<base64>`, one per `Sig:` line.
+    pub sigs: Vec<&'a str>,
+    /// `text:<hash>` or `fixed:<hash>`, for content-addressed paths.
+    pub ca: Option<&'a str>,
+}
+
+impl<'a> NarInfo<'a> {
+    pub fn parse(text: &'a str) -> Result<Self, String> {
+        let mut info = NarInfo::default();
+        let (mut store_path, mut url, mut nar_hash, mut nar_size) = (None, None, None, None);
+
+        for line in text.lines().filter(|line| !line.is_empty()) {
+            let Some((key, value)) = line.split_once(':') else {
+                return Err(format!("invalid narinfo line: {line}"));
+            };
+            let value = value.strip_prefix(' ').unwrap_or(value);
+            match key {
+                "StorePath" => store_path = Some(value),
+                "URL" => url = Some(value),
+                "Compression" => info.compression = Some(value),
+                "FileHash" => info.file_hash = Some(value),
+                "FileSize" => info.file_size = Some(parse_size(key, value)?),
+                "NarHash" => nar_hash = Some(value),
+                "NarSize" => nar_size = Some(parse_size(key, value)?),
+                "References" => {
+                    info.references = value.split(' ').filter(|r| !r.is_empty()).collect()
+                }
+                // Nix writes this when it doesn't know the deriver.
+                "Deriver" => info.deriver = Some(value).filter(|d| *d != "unknown-deriver"),
+                "System" => info.system = Some(value),
+                "Sig" => info.sigs.push(value),
+                "CA" => info.ca = Some(value),
+                _ => {}
+            }
+        }
+
+        let missing = |field: &str| format!("narinfo is missing {field}");
+        info.store_path = store_path.ok_or_else(|| missing("StorePath"))?;
+        info.url = url.ok_or_else(|| missing("URL"))?;
+        info.nar_hash = nar_hash.ok_or_else(|| missing("NarHash"))?;
+        info.nar_size = nar_size.ok_or_else(|| missing("NarSize"))?;
+        Ok(info)
+    }
+}
+
+fn parse_size(field: &str, value: &str) -> Result<u64, String> {
+    value
+        .parse()
+        .map_err(|_| format!("{field} must be a non-negative integer"))
+}
+
+/// Appends a `Sig:` line to narinfo text, keeping everything Nix sent.
+pub fn append_sig(text: &str, sig: &str) -> String {
+    let mut out = String::with_capacity(text.len() + sig.len() + 7);
+    out.push_str(text);
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("Sig: ");
+    out.push_str(sig);
+    out.push('\n');
+    out
+}
 
 /// Parsed Nix signing secret used to produce `.narinfo` `Sig:` entries.
 ///
@@ -51,8 +134,8 @@ impl NarInfoSigKey {
     /// Nix signs the fingerprint:
     /// `1;<StorePath>;<NarHash>;<NarSize>;<References>`
     /// where `NarHash` is in Nix-base32 format (not SRI/base64), and references are
-    /// joined by `,`.
-    pub fn sign(&self, info: &NarInfo<'_>) -> Result<Sig<'static>, String> {
+    /// joined by `,`. Returns the `Sig:` value, `<key-name>:<base64>`.
+    pub fn sign(&self, info: &NarInfo<'_>) -> Result<String, String> {
         let fingerprint = narinfo_fingerprint(info)?;
 
         let secret_bytes = STANDARD
@@ -70,10 +153,7 @@ impl NarInfoSigKey {
         let sig: Signature = signing_key.sign(fingerprint.as_bytes());
         let sig_b64 = STANDARD.encode(sig.to_bytes());
 
-        Ok(Sig {
-            key_name: self.key_name.clone().into(),
-            sig: sig_b64.into(),
-        })
+        Ok(format!("{}:{sig_b64}", self.key_name))
     }
 }
 
@@ -86,7 +166,7 @@ pub struct NarInfoContext {
 
 /// Generic validation trait for domain objects.
 ///
-/// `Validate` allows model types (e.g. `narinfo::NarInfo`) to validate themselves
+/// `Validate` allows model types (e.g. `NarInfo`) to validate themselves
 /// using additional request-specific context (route params, etc.) provided via
 /// the associated `Context` type.
 pub trait Validate {
@@ -130,7 +210,7 @@ impl Validate for NarInfo<'_> {
             return Err("URL must include a non-empty file hash".to_string());
         }
 
-        validate_sha256_hash_field("NarHash", &self.nar_hash)?;
+        validate_sha256_hash_field("NarHash", self.nar_hash)?;
 
         if self.nar_size == 0 {
             return Err("NarSize must be a positive integer".to_string());
@@ -139,9 +219,6 @@ impl Validate for NarInfo<'_> {
         // References are store path *basenames* (`<hash>-<name>`, relative to
         // /nix/store), like Deriver. Empty means no references.
         for reference in self.references.iter() {
-            if reference.is_empty() {
-                continue;
-            }
             if !is_store_path_basename(reference) {
                 return Err(
                     "References must be space-separated store path basenames (<hash>-<name>)"
@@ -153,15 +230,13 @@ impl Validate for NarInfo<'_> {
         // Optional fields
         // Deriver is the *basename* of the .drv (path relative to /nix/store),
         // not a full store path. See the cache.nixos.org narinfo format.
-        if let Some(deriver) = &self.deriver {
-            let s = deriver.as_ref();
-            if !s.ends_with(".drv") || s.contains('/') {
+        if let Some(deriver) = self.deriver {
+            if !deriver.ends_with(".drv") || deriver.contains('/') {
                 return Err("Deriver must be a basename ending in .drv".to_string());
             }
         }
 
-        if let Some(compression) = &self.compression {
-            let compression = compression.as_ref();
+        if let Some(compression) = self.compression {
             match compression {
                 "xz" | "bzip2" | "zstd" | "none" => {}
                 _ => return Err("Compression must be one of xz, bzip2, zstd, none".to_string()),
@@ -178,34 +253,21 @@ impl Validate for NarInfo<'_> {
             }
         }
 
+        // Content-addressed paths (`nix store add`, fixed-output derivation
+        // outputs) carry CA. Nix doesn't sign it, but clients use it.
+        if let Some(ca) = self.ca {
+            validate_ca(ca)?;
+        }
+
+        for sig in self.sigs.iter() {
+            match sig.split_once(':') {
+                Some((name, value)) if !name.is_empty() && !value.is_empty() => {}
+                _ => return Err("Sig must be <key-name>:<signature>".to_string()),
+            }
+        }
+
         Ok(())
     }
-}
-
-/// Splits the `CA:` field off a narinfo body.
-///
-/// Content-addressed paths (`nix store add`, fixed-output derivation outputs)
-/// carry `CA: <method>:<hash>`, which the `narinfo` crate rejects as an unknown
-/// key. Nix doesn't sign it, so the rest parses, validates and signs as before,
-/// and `serialize_narinfo` writes it back. Returns the body without the `CA:`
-/// line, and its value.
-pub fn split_ca(body: &str) -> Result<(String, Option<String>), String> {
-    let mut rest = String::with_capacity(body.len());
-    let mut ca = None;
-    for line in body.lines() {
-        let Some(value) = line.strip_prefix("CA:") else {
-            rest.push_str(line);
-            rest.push('\n');
-            continue;
-        };
-        if ca.is_some() {
-            return Err("CA must appear at most once".to_string());
-        }
-        let value = value.trim();
-        validate_ca(value)?;
-        ca = Some(value.to_string());
-    }
-    Ok((rest, ca))
 }
 
 /// `CA` is `text:<hash>` or `fixed:<hash>`, where `<hash>` may carry a method
@@ -219,16 +281,6 @@ fn validate_ca(value: &str) -> Result<(), String> {
         Some(hash) if !hash.is_empty() && !hash.contains(char::is_whitespace) => Ok(()),
         _ => Err("CA must be text:<hash> or fixed:<hash>".to_string()),
     }
-}
-
-/// Serializes a narinfo and its `CA:` field, without a trailing newline.
-pub fn serialize_narinfo(info: &NarInfo<'_>, ca: Option<&str>) -> String {
-    let mut data = String::new();
-    info.serialize_into(&mut data).unwrap();
-    if let Some(ca) = ca {
-        write!(data, "\nCA: {ca}").unwrap();
-    }
-    data
 }
 
 /// Whether `name` is a store path basename: a 32-character Nix-base32 hash, a
@@ -249,13 +301,12 @@ const NIX32_ALPHABET: &[u8; 32] = b"0123456789abcdfghijklmnpqrsvwxyz";
 
 fn narinfo_fingerprint(info: &NarInfo<'_>) -> Result<String, String> {
     // NarHash must be sha256:<nix32> to match Nix's fingerprinting.
-    let nar_hash_nix32 = nar_hash_to_nix32(&info.nar_hash)?;
+    let nar_hash_nix32 = nar_hash_to_nix32(info.nar_hash)?;
 
     // narinfo lists references as basenames, but Nix signs their full paths.
     let refs = info
         .references
         .iter()
-        .filter(|r| !r.is_empty())
         .map(|r| format!("/nix/store/{r}"))
         .collect::<Vec<_>>()
         .join(",");
@@ -413,15 +464,14 @@ CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
         "qNaG672O6KwKQkp4RZ6aG1jFsCyi7DsOmZtuwvHgMXuXFUpo0cBKBsGQFL2qLM6oW+9vN/Xk2/NpYle7sdq7BA==";
 
     fn narinfo() -> NarInfo<'static> {
-        NarInfo::builder()
-            .store_path("/nix/store/abc-min".into())
-            .url("nar/abc.nar")
-            .nar_hash("sha256-LHdODcc9LKl8TykaDMvSkpcBrXrTcP8aW2B6trJhxdE=".into())
-            .nar_size(1)
-            .references(vec![])
-            .compression(Some("none".into()))
-            .build()
-            .expect("NarInfo should build")
+        NarInfo {
+            store_path: "/nix/store/abc-min",
+            url: "nar/abc.nar",
+            nar_hash: "sha256-LHdODcc9LKl8TykaDMvSkpcBrXrTcP8aW2B6trJhxdE=",
+            nar_size: 1,
+            compression: Some("none"),
+            ..NarInfo::default()
+        }
     }
 
     #[test]
@@ -436,7 +486,7 @@ CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
     #[test]
     fn narinfo_validate_rejects_store_path() {
         let mut info = narinfo();
-        info.store_path = "/tmp/abc".into();
+        info.store_path = "/tmp/abc";
 
         let ctx = NarInfoContext {
             hash: "abc".to_string(),
@@ -496,7 +546,7 @@ CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
     #[test]
     fn narinfo_validate_rejects_bad_compression() {
         let mut info = narinfo();
-        info.compression = Some("gzip".into());
+        info.compression = Some("gzip");
 
         let ctx = NarInfoContext {
             hash: "abc".to_string(),
@@ -542,11 +592,10 @@ CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
 
         let sig = key.sign(&info).expect("should sign");
 
-        assert_eq!(sig.key_name, "cache.example.org-1");
+        let (key_name, sig) = sig.split_once(':').expect("Sig is <key-name>:<base64>");
+        assert_eq!(key_name, "cache.example.org-1");
         // Ed25519 signature is 64 bytes.
-        let decoded = STANDARD
-            .decode(sig.sig.as_ref())
-            .expect("signature should be base64");
+        let decoded = STANDARD.decode(sig).expect("signature should be base64");
         assert_eq!(decoded.len(), 64);
     }
 
@@ -569,7 +618,7 @@ CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
             "ls125wfdax9gk2ryq7fgzrncpi6x5v2s-bad/name",
         ] {
             let mut info = narinfo();
-            info.references = vec![reference.into()];
+            info.references = vec![reference];
             let ctx = NarInfoContext {
                 hash: "abc".to_string(),
             };
@@ -583,17 +632,13 @@ CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
         let info = NarInfo::parse(NIX_SIGNED).expect("NarInfo should parse");
         let key = NarInfoSigKey::parse(TEST_KEY).expect("key should parse");
         let sig = key.sign(&info).expect("should sign");
-        assert_eq!(sig.key_name, "cache.example.org-1");
-        assert_eq!(sig.sig, NIX_SIG);
+        assert_eq!(sig, format!("cache.example.org-1:{NIX_SIG}"));
     }
 
     #[test]
-    fn split_ca_extracts_ca_and_the_rest_validates() {
-        let (rest, ca) = split_ca(NIX_SIGNED_CA).expect("CA should split");
-        assert_eq!(ca.as_deref(), Some(NIX_CA));
-        assert!(!rest.contains("CA:"));
-
-        let info = NarInfo::parse(&rest).expect("NarInfo should parse");
+    fn narinfo_validate_accepts_a_content_addressed_path() {
+        let info = NarInfo::parse(NIX_SIGNED_CA).expect("NarInfo should parse");
+        assert_eq!(info.ca, Some(NIX_CA));
         let ctx = NarInfoContext {
             hash: "2h2g7i4x6gsadn2s7vi0af6g8b24n584".to_string(),
         };
@@ -601,43 +646,135 @@ CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
     }
 
     #[test]
-    fn split_ca_without_ca_keeps_the_body() {
-        let (rest, ca) = split_ca(NIX_SIGNED).expect("body should split");
-        assert_eq!(ca, None);
-        assert_eq!(rest, NIX_SIGNED);
-    }
-
-    #[test]
-    fn split_ca_rejects_bad_ca() {
-        for line in [
-            "CA: sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq",
-            "CA: fixed:",
-            "CA: fixed:r:sha256:1yk2 kns0dq14",
-            "CA: text:sha256:abc\nCA: text:sha256:abc",
+    fn narinfo_validate_rejects_bad_ca() {
+        for ca in [
+            "sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq",
+            "fixed:",
+            "fixed:r:sha256:1yk2 kns0dq14",
         ] {
-            let body = format!("{NIX_SIGNED}{line}\n");
-            let err = split_ca(&body).unwrap_err();
-            assert!(err.contains("CA"), "{line}: {err}");
+            let mut info = narinfo();
+            info.ca = Some(ca);
+            let ctx = NarInfoContext {
+                hash: "abc".to_string(),
+            };
+            let err = info.validate(&ctx).unwrap_err();
+            assert!(err.contains("CA"), "{ca}: {err}");
         }
     }
 
     #[test]
-    fn serialize_narinfo_writes_ca_back() {
-        let (rest, ca) = split_ca(NIX_SIGNED_CA).expect("CA should split");
-        let info = NarInfo::parse(&rest).expect("NarInfo should parse");
-        let data = serialize_narinfo(&info, ca.as_deref());
-        assert!(data.ends_with(&format!("\nCA: {NIX_CA}")), "{data}");
-
-        let (_, ca) = split_ca(&data).expect("serialized narinfo should split");
-        assert_eq!(ca.as_deref(), Some(NIX_CA));
+    fn narinfo_validate_rejects_bad_sigs() {
+        for sig in ["no-colon", ":sig", "key:"] {
+            let mut info = narinfo();
+            info.sigs = vec![sig];
+            let ctx = NarInfoContext {
+                hash: "abc".to_string(),
+            };
+            let err = info.validate(&ctx).unwrap_err();
+            assert!(err.contains("Sig"), "{sig}: {err}");
+        }
     }
 
     #[test]
     fn sign_matches_nix_for_a_content_addressed_path() {
-        let (rest, _) = split_ca(NIX_SIGNED_CA).expect("CA should split");
-        let info = NarInfo::parse(&rest).expect("NarInfo should parse");
+        let info = NarInfo::parse(NIX_SIGNED_CA).expect("NarInfo should parse");
         let key = NarInfoSigKey::parse(TEST_KEY).expect("key should parse");
         let sig = key.sign(&info).expect("should sign");
-        assert_eq!(sig.sig, NIX_CA_SIG);
+        assert_eq!(sig, format!("cache.example.org-1:{NIX_CA_SIG}"));
+    }
+
+
+    /// Written by Nix for a path with a reference and a deriver.
+    const PARSE_WITH_REFERENCES: &str = "\
+StorePath: /nix/store/mgc3m5ad39b84vkdrca6zd9jan5a28c2-hello-2.12.3
+URL: nar/0139403halzgnamd4wcc0j80yd06sf1wb0gjn4xswh855nvrwgd6.nar
+Compression: none
+FileHash: sha256:0139403halzgnamd4wcc0j80yd06sf1wb0gjn4xswh855nvrwgd6
+FileSize: 113096
+NarHash: sha256:0139403halzgnamd4wcc0j80yd06sf1wb0gjn4xswh855nvrwgd6
+NarSize: 113096
+References: ls125wfdax9gk2ryq7fgzrncpi6x5v2s-libiconv-115.100.1
+Deriver: lhbc5cbhqmaq5mq5171lxhkr1qf0mkbr-hello-2.12.3.drv
+Sig: cache.example.org-1:Asy0nOGVV5q3qTjAICHgn7g7Xdm8fxYPv90mmG1LhBdmgFwr8PH9nSoYNNHgCthL34dgBdnLAorV/4cJzJoiCg==
+";
+
+    #[test]
+    fn parses_every_field() {
+        let info = NarInfo::parse(PARSE_WITH_REFERENCES).expect("should parse");
+        assert_eq!(
+            info,
+            NarInfo {
+                store_path: "/nix/store/mgc3m5ad39b84vkdrca6zd9jan5a28c2-hello-2.12.3",
+                url: "nar/0139403halzgnamd4wcc0j80yd06sf1wb0gjn4xswh855nvrwgd6.nar",
+                compression: Some("none"),
+                file_hash: Some("sha256:0139403halzgnamd4wcc0j80yd06sf1wb0gjn4xswh855nvrwgd6"),
+                file_size: Some(113096),
+                nar_hash: "sha256:0139403halzgnamd4wcc0j80yd06sf1wb0gjn4xswh855nvrwgd6",
+                nar_size: 113096,
+                references: vec!["ls125wfdax9gk2ryq7fgzrncpi6x5v2s-libiconv-115.100.1"],
+                deriver: Some("lhbc5cbhqmaq5mq5171lxhkr1qf0mkbr-hello-2.12.3.drv"),
+                system: None,
+                sigs: vec![
+                    "cache.example.org-1:Asy0nOGVV5q3qTjAICHgn7g7Xdm8fxYPv90mmG1LhBdmgFwr8PH9nSoYNNHgCthL34dgBdnLAorV/4cJzJoiCg=="
+                ],
+                ca: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_ca_and_system_and_empty_references() {
+        let text = "StorePath: /nix/store/2h2g7i4x6gsadn2s7vi0af6g8b24n584-ca\nURL: nar/x.nar\nNarHash: sha256:x\nNarSize: 1\nReferences: \nSystem: x86_64-linux\nCA: fixed:r:sha256:x\n";
+        let info = NarInfo::parse(text).expect("should parse");
+        assert_eq!(info.references, Vec::<&str>::new());
+        assert_eq!(info.system, Some("x86_64-linux"));
+        assert_eq!(info.ca, Some("fixed:r:sha256:x"));
+    }
+
+    #[test]
+    fn follows_nix_for_unknown_and_duplicate_keys() {
+        let text = format!(
+            "{PARSE_WITH_REFERENCES}Future: anything\nNarSize: 7\nSig: other-1:abc\nDeriver: unknown-deriver\n"
+        );
+        let info = NarInfo::parse(&text).expect("unknown keys are ignored");
+        assert_eq!(info.nar_size, 7, "the last duplicate wins");
+        assert_eq!(info.sigs.len(), 2, "Sig lines accumulate");
+        assert_eq!(info.deriver, None);
+    }
+
+    #[test]
+    fn rejects_missing_fields_and_bad_lines() {
+        for (text, expected) in [
+            (
+                "URL: nar/x.nar\nNarHash: sha256:x\nNarSize: 1\n",
+                "StorePath",
+            ),
+            (
+                "StorePath: /nix/store/x\nNarHash: sha256:x\nNarSize: 1\n",
+                "URL",
+            ),
+            (
+                "StorePath: /nix/store/x\nURL: nar/x.nar\nNarSize: 1\n",
+                "NarHash",
+            ),
+            (
+                "StorePath: /nix/store/x\nURL: nar/x.nar\nNarHash: sha256:x\n",
+                "NarSize",
+            ),
+            (
+                "StorePath: /nix/store/x\nURL: nar/x.nar\nNarHash: sha256:x\nNarSize: -1\n",
+                "NarSize",
+            ),
+            ("StorePath /nix/store/x\n", "invalid narinfo line"),
+        ] {
+            let err = NarInfo::parse(text).unwrap_err();
+            assert!(err.contains(expected), "{text:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn append_sig_keeps_the_text() {
+        assert_eq!(append_sig("A: 1\n", "k:s"), "A: 1\nSig: k:s\n");
+        assert_eq!(append_sig("A: 1", "k:s"), "A: 1\nSig: k:s\n");
     }
 }

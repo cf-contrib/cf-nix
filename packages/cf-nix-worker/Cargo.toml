@@ -9,7 +9,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 http-auth-basic = "0.3.7"
-narinfo = "1.0.1"
 worker = { version = "0.8" }
 worker-macros = { version = "0.8" }
 

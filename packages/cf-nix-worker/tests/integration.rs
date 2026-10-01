@@ -2,8 +2,6 @@
 
 mod helper;
 
-use narinfo::{NarInfo, NixCacheInfo};
-
 #[tokio::test]
 async fn test_get_nix_cache_info() {
     let response = helper::get("nix-cache-info")
@@ -11,10 +9,10 @@ async fn test_get_nix_cache_info() {
         .expect("the request failed");
     assert_eq!(response.status(), 200);
     let data = response.text().await.expect("the body failed");
-    let info = NixCacheInfo::parse(&data).expect("the response failed");
-    assert_eq!(info.priority, 40);
-    assert_eq!(info.store_dir, "/nix/store");
-    assert!(info.wants_mass_query);
+    assert_eq!(
+        data,
+        "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 40\n"
+    );
 }
 
 #[tokio::test]
@@ -33,14 +31,9 @@ async fn test_get_narinfo() {
     assert_eq!(get_resp.status(), 200);
     assert_eq!(get_resp.headers().get("content-type").unwrap(), file_type);
 
+    // The fixture is signed by Nix, so the Worker stores and serves it as is.
     let resp_body = get_resp.text().await.expect("the body failed");
-
-    let local_info = NarInfo::parse(&file_data).unwrap();
-    let server_info = NarInfo::parse(&resp_body).expect("the response failed");
-    assert_eq!(server_info.url, local_info.url);
-    assert_eq!(server_info.nar_hash, local_info.nar_hash);
-    assert_eq!(server_info.store_path, local_info.store_path);
-    assert_eq!(server_info.deriver.unwrap(), local_info.deriver.unwrap(),);
+    assert_eq!(resp_body, file_data);
 }
 
 #[tokio::test]
@@ -75,7 +68,7 @@ async fn test_get_content_addressed_narinfo() {
     let file_path = format!("tests/fixture/{file_name}");
     let file_data = std::fs::read_to_string(file_path).unwrap();
 
-    let put_resp = helper::put(file_name, file_type, file_data)
+    let put_resp = helper::put(file_name, file_type, file_data.clone())
         .await
         .expect("the request failed");
     assert_eq!(put_resp.status(), 200);
@@ -83,12 +76,13 @@ async fn test_get_content_addressed_narinfo() {
     let get_resp = helper::get(file_name).await.expect("the request failed");
     assert_eq!(get_resp.status(), 200);
 
+    // Served exactly as uploaded, CA: line included.
     let resp_body = get_resp.text().await.expect("the body failed");
+    assert_eq!(resp_body, file_data);
     assert!(
-        resp_body
-            .lines()
-            .any(|line| line == "CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq"),
-        "{resp_body}"
+        resp_body.contains(
+            "\nCA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq\n"
+        )
     );
 }
 
@@ -191,4 +185,20 @@ async fn test_healthz() {
     let resp = helper::get("healthz").await.expect("the request failed");
     assert_eq!(resp.status(), 200);
     assert_eq!(resp.text().await.expect("the body failed"), "ok");
+}
+
+#[tokio::test]
+async fn test_put_narinfo_keeps_unknown_fields() {
+    // Nix ignores keys it doesn't know; the Worker must not drop them either.
+    let file_name = "j5m1qd2dbsmhq0mw13yb8wijnm3pq4z0.narinfo";
+    let file_data = std::fs::read_to_string(format!("tests/fixture/{file_name}")).unwrap();
+    let with_extra = format!("{file_data}System: x86_64-linux\nFuture: kept\n");
+
+    let put_resp = helper::put(file_name, "text/x-nix-narinfo", with_extra.clone())
+        .await
+        .expect("the request failed");
+    assert_eq!(put_resp.status(), 200);
+
+    let get_resp = helper::get(file_name).await.expect("the request failed");
+    assert_eq!(get_resp.text().await.expect("the body failed"), with_extra);
 }
