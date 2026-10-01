@@ -20,13 +20,6 @@ variable "r2_bucket_name" {
   description = "R2 bucket name used to store .narinfo and .nar objects."
 }
 
-variable "nix_token" {
-  type        = string
-  description = "Legacy shared upload token (HTTP Basic, username x-auth-token). Leave null to turn it off."
-  sensitive   = true
-  default     = null
-}
-
 variable "github_repository" {
   type        = string
   description = "owner/repo. GitHub users with push access to it can upload with their own GitHub token (username github). Leave null to turn it off."

@@ -62,7 +62,6 @@ nix copy --to https://cf-nix-cache.<your-subdomain>.workers.dev /nix/store/<hash
 | `github_owner_id`       | with rules | `null`       | Numeric GitHub org/user ID whose repos may upload via Actions OIDC.        |
 | `github_oidc_audience`  | with rules | `null`       | Expected `aud` of Actions OIDC tokens, e.g. the cache URL.                 |
 | `github_oidc_rules`     | no       | `[]`           | OIDC claim rules (list of maps); any one must match. Empty turns OIDC off. |
-| `nix_token`             | no       | `null`         | Legacy shared upload token (username `x-auth-token`).                      |
 | `nix_secret`            | yes      | —              | `<key-name>:<base64>` Ed25519 signing secret. Required because the Worker rejects unsigned narinfo. |
 | `worker_name`           | no       | `cf-nix-cache` | Cloudflare Worker script name.                                             |
 | `worker_compatibility_date` | no   | `2026-05-14`   | Workers runtime compatibility date.                                        |

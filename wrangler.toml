@@ -10,4 +10,5 @@ binding = "NIX_BUCKET"
 bucket_name = "nix-bucket-dev"
 
 [vars]
-NIX_TOKEN = "nix-token-dev"
+# Uploads in local dev need a GitHub token with push access to this repo.
+GITHUB_REPOSITORY = "cf-contrib/cf-nix-cache"

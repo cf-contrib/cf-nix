@@ -44,13 +44,6 @@ resource "cloudflare_worker_version" "nix_cache" {
       },
     ],
     # Upload auth: a mechanism is on only when its bindings exist.
-    var.nix_token == null ? [] : [
-      {
-        name = "NIX_TOKEN"
-        type = "secret_text"
-        text = var.nix_token
-      },
-    ],
     [
       for name, text in local.auth_vars : {
         name = name

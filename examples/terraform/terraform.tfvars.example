@@ -16,9 +16,6 @@ github_repository = "example-org/nix-cache-access"
 #   { repository_id = "200000002", ref = "refs/heads/main" },
 # ]
 
-# Legacy shared token (username x-auth-token). Leave unset once you've moved to the above.
-# nix_token = "change-me"
-
 # Ed25519 signing secret (<key-name>:<base64>) — generate with:
 #   nix key generate-secret --key-name cache.example.org-1
 nix_secret = "cache.example.org-1:..."

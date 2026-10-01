@@ -106,16 +106,18 @@ async fn test_get_nar_not_found() {
 }
 
 #[tokio::test]
-async fn test_whoami_with_token() {
-    let resp = helper::get_with_auth("auth/whoami", "x-auth-token", "nix-token-dev")
+async fn test_whoami_with_github_token() {
+    let resp = helper::get_with_auth("auth/whoami", "github", &helper::github_token())
         .await
         .expect("the request failed");
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value =
         serde_json::from_str(&resp.text().await.expect("the body failed")).unwrap();
-    assert_eq!(
-        body,
-        serde_json::json!({ "kind": "token", "subject": "x-auth-token" })
+    assert_eq!(body["kind"], "github");
+    assert!(
+        body["subject"]
+            .as_str()
+            .is_some_and(|login| !login.is_empty())
     );
 }
 
@@ -128,14 +130,12 @@ async fn test_whoami_without_credentials() {
 }
 
 #[tokio::test]
-async fn test_whoami_with_unconfigured_mechanisms() {
-    // The dev config only sets NIX_TOKEN, so GitHub and OIDC auth are off.
-    for (username, password) in [("github", "gho_example"), ("oidc", "a.b.c")] {
-        let resp = helper::get_with_auth("auth/whoami", username, password)
-            .await
-            .expect("the request failed");
-        assert_eq!(resp.status(), 401, "{username}");
-    }
+async fn test_whoami_with_oidc_disabled() {
+    // The dev config only sets GITHUB_REPOSITORY, so OIDC auth is off.
+    let resp = helper::get_with_auth("auth/whoami", "oidc", "a.b.c")
+        .await
+        .expect("the request failed");
+    assert_eq!(resp.status(), 401);
 }
 
 #[tokio::test]
@@ -145,8 +145,9 @@ async fn test_put_rejects_bad_credentials() {
 
     for credentials in [
         None,
-        Some(("x-auth-token", "wrong-token")),
-        Some(("someone", "nix-token-dev")),
+        Some(("github", "gho_notARealToken000000000000000000000")),
+        Some(("x-auth-token", "nix-token-dev")),
+        Some(("someone", "secret")),
     ] {
         let resp = helper::put_with_auth(
             file_name,

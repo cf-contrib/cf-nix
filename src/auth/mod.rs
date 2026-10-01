@@ -14,8 +14,7 @@ mod oidc;
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Identity {
     pub kind: IdentityKind,
-    /// GitHub login (`github`), the OIDC `sub` claim (`oidc`), or
-    /// `x-auth-token` (`token`).
+    /// GitHub login (`github`) or the OIDC `sub` claim (`oidc`).
     pub subject: String,
     /// Index of the matching `GITHUB_OIDC_RULES` entry (`oidc` only).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -27,7 +26,6 @@ pub struct Identity {
 pub enum IdentityKind {
     Github,
     Oidc,
-    Token,
 }
 
 impl fmt::Display for Identity {
@@ -35,7 +33,6 @@ impl fmt::Display for Identity {
         let kind = match self.kind {
             IdentityKind::Github => "github",
             IdentityKind::Oidc => "oidc",
-            IdentityKind::Token => "token",
         };
         write!(f, "{kind}:{}", self.subject)?;
         if let Some(rule) = self.rule {
@@ -83,8 +80,6 @@ impl AuthError {
 /// every authorized request is rejected with `401`.
 #[derive(Debug)]
 struct Config {
-    /// Legacy shared token (`NIX_TOKEN`).
-    token: Option<String>,
     /// GitHub user tokens (`GITHUB_REPOSITORY`).
     github: Option<github::Config>,
     /// GitHub Actions OIDC (`GITHUB_OWNER_ID`, `GITHUB_OIDC_AUDIENCE`, `GITHUB_OIDC_RULES`).
@@ -124,11 +119,7 @@ impl Config {
             }
         };
 
-        Ok(Self {
-            token: get("NIX_TOKEN"),
-            github,
-            oidc,
-        })
+        Ok(Self { github, oidc })
     }
 }
 
@@ -136,8 +127,6 @@ impl Config {
 /// username selects how the password is verified.
 #[derive(Debug, PartialEq)]
 enum Credential {
-    /// `x-auth-token:<NIX_TOKEN>`
-    Token(String),
     /// `github:<GitHub user token>`
     Github(String),
     /// `oidc:<GitHub Actions OIDC JWT>`
@@ -155,11 +144,10 @@ impl Credential {
         };
 
         match input.user_id.as_str() {
-            "x-auth-token" => Ok(Credential::Token(input.password)),
             "github" => Ok(Credential::Github(input.password)),
             "oidc" => Ok(Credential::Oidc(input.password)),
             _ => Err(AuthError::Unauthorized(
-                "unknown username: use github, oidc or x-auth-token".to_string(),
+                "unknown username: use github or oidc".to_string(),
             )),
         }
     }
@@ -172,21 +160,6 @@ pub async fn authorize(req: &Request, env: &Env) -> std::result::Result<Identity
     let header = req.headers().get("Authorization").unwrap_or_default();
 
     match Credential::parse(header.as_deref())? {
-        Credential::Token(password) => {
-            let Some(expected) = config.token else {
-                return Err(AuthError::Unauthorized(
-                    "token auth is not enabled".to_string(),
-                ));
-            };
-            if !constant_time_eq(password.as_bytes(), expected.as_bytes()) {
-                return Err(AuthError::Unauthorized("invalid credentials".to_string()));
-            }
-            Ok(Identity {
-                kind: IdentityKind::Token,
-                subject: "x-auth-token".to_string(),
-                rule: None,
-            })
-        }
         Credential::Github(token) => {
             let Some(config) = config.github else {
                 return Err(AuthError::Unauthorized(
@@ -204,10 +177,6 @@ pub async fn authorize(req: &Request, env: &Env) -> std::result::Result<Identity
             oidc::authorize(&config, &jwt).await
         }
     }
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 #[cfg(test)]
@@ -231,7 +200,6 @@ mod tests {
     #[test]
     fn config_with_nothing_set_disables_every_mechanism() {
         let config = Config::from_vars(vars(&[])).expect("empty config is valid");
-        assert!(config.token.is_none());
         assert!(config.github.is_none());
         assert!(config.oidc.is_none());
     }
@@ -267,10 +235,6 @@ mod tests {
     fn credential_dispatches_on_username() {
         let parse = |user, password| Credential::parse(Some(&basic(user, password)));
         assert_eq!(
-            parse("x-auth-token", "secret"),
-            Ok(Credential::Token("secret".to_string()))
-        );
-        assert_eq!(
             parse("github", "gho_example"),
             Ok(Credential::Github("gho_example".to_string()))
         );
@@ -278,10 +242,12 @@ mod tests {
             parse("oidc", "a.b.c"),
             Ok(Credential::Oidc("a.b.c".to_string()))
         );
-        assert!(matches!(
-            parse("someone", "secret"),
-            Err(AuthError::Unauthorized(_))
-        ));
+        for user in ["someone", "x-auth-token"] {
+            assert!(matches!(
+                parse(user, "secret"),
+                Err(AuthError::Unauthorized(_))
+            ));
+        }
     }
 
     #[test]
@@ -294,13 +260,6 @@ mod tests {
             Credential::parse(Some("Bearer abc")),
             Err(AuthError::Unauthorized(_))
         ));
-    }
-
-    #[test]
-    fn constant_time_eq_compares_bytes() {
-        assert!(constant_time_eq(b"secret", b"secret"));
-        assert!(!constant_time_eq(b"secret", b"secreT"));
-        assert!(!constant_time_eq(b"secret", b"secret2"));
     }
 
     #[test]

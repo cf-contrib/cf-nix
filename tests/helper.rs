@@ -38,12 +38,18 @@ pub async fn post<B: Into<Body>>(
         .await
 }
 
-/// Sends an HTTP PUT request with the given content type, body, and
-/// optional Authorization header.
+/// GitHub token used for uploads, from `NIX_CACHE_GITHUB_TOKEN`. It needs
+/// push access to the `GITHUB_REPOSITORY` in `wrangler.toml`.
+pub fn github_token() -> String {
+    std::env::var("NIX_CACHE_GITHUB_TOKEN")
+        .expect("set NIX_CACHE_GITHUB_TOKEN, e.g. NIX_CACHE_GITHUB_TOKEN=$(gh auth token)")
+}
+
+/// Sends an HTTP PUT request with the given content type and body.
 ///
-/// Builds a `reqwest::Client`, attaches the `content-type` header,
-/// optionally attaches an `Authorization` header with the provided token,
-/// and sends the body in a PUT request to the target URL.
+/// Builds a `reqwest::Client`, attaches the `content-type` header and
+/// HTTP Basic credentials for `github_token()`, and sends the body in a PUT
+/// request to the target URL.
 pub async fn put<B: Into<Body>>(
     path: &str,
     content_type: &str,
@@ -56,7 +62,7 @@ pub async fn put<B: Into<Body>>(
         .put(url.to_string())
         .body(content_body)
         .header("content-type", content_type)
-        .basic_auth("x-auth-token", Some("nix-token-dev"))
+        .basic_auth("github", Some(github_token()))
         .send()
         .await
 }

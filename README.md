@@ -109,7 +109,6 @@ Reads are public. Uploads (`PUT`) and `GET /auth/whoami` need HTTP Basic credent
 | -------------- | ------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | `github`       | A GitHub user token (`gh auth token`) | The user has push access to `GITHUB_REPOSITORY`                         | `GITHUB_REPOSITORY`                                              |
 | `oidc`         | A GitHub Actions OIDC token           | Signature, issuer, audience, expiry and owner, then `GITHUB_OIDC_RULES` | `GITHUB_OWNER_ID`, `GITHUB_OIDC_AUDIENCE`, `GITHUB_OIDC_RULES`   |
-| `x-auth-token` | `NIX_TOKEN`                           | The shared token (legacy)                                               | `NIX_TOKEN`                                                      |
 
 A mechanism is off unless its variables are set. With none set, every upload gets `401`. An invalid configuration, such as only some of the OIDC variables, fails closed: uploads get `500` and the reason is logged.
 
@@ -169,16 +168,6 @@ steps:
 > [!WARNING]
 > GitHub OIDC tokens expire 5 minutes after they're issued, and the lifetime can't be changed. Fetch the token right before `nix copy`. An upload that runs longer than about 6 minutes (5 minutes plus 60 seconds of clock tolerance) fails partway. gh-nix plans to refresh the token during long uploads.
 
-### Shared token (legacy)
-
-The username is `x-auth-token` and the password is `NIX_TOKEN`. Everyone shares one long-lived token, and nothing ties an upload to a person. Prefer the mechanisms above, and leave `NIX_TOKEN` unset once you've moved to them.
-
-```
-machine <your-worker>.workers.dev
-  login x-auth-token
-  password <NIX_TOKEN>
-```
-
 ## HTTP API
 
 | Method | Path              | Auth   | Description                                |
@@ -206,7 +195,6 @@ machine <your-worker>.workers.dev
 | `GITHUB_OWNER_ID`    | for `oidc`  | Numeric ID of the GitHub org or user whose repos may upload (`gh api orgs/<org> --jq .id`, or `users/<user>`).   |
 | `GITHUB_OIDC_AUDIENCE` | for `oidc` | Expected `aud` of the OIDC token, e.g. the cache URL. Can't be GitHub's default.                               |
 | `GITHUB_OIDC_RULES`  | for `oidc`  | JSON array of claim rules; see [CI: GitHub Actions OIDC](#ci-github-actions-oidc).                               |
-| `NIX_TOKEN`          | legacy      | Shared upload token (username `x-auth-token`). Leave unset to turn off.                                          |
 | `NIX_SECRET`         | conditional | `<key-name>:<base64>` — base64 decodes to 64 Ed25519 secret-key bytes (as emitted by `nix key generate-secret`). Required unless every uploader sends pre-signed narinfo. |
 
 ### Bindings
@@ -236,6 +224,12 @@ The Nix flake gives you a dev shell with the tooling already pinned:
 nix develop -c cargo test           # run the test suite
 nix develop -c worker-build --dev   # build the Worker bundle into ./build
 nix develop -c wrangler dev         # serve locally via wrangler
+```
+
+The integration tests run against `wrangler dev`. Uploads need a GitHub token with push access to the `GITHUB_REPOSITORY` in `wrangler.toml`:
+
+```bash
+NIX_CACHE_GITHUB_TOKEN=$(gh auth token) nix develop -c cargo test --features integration
 ```
 
 ## Dependencies
