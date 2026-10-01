@@ -5,7 +5,7 @@
 > uploads, and authorizes uploaders by their GitHub identity.
 
 Reads are public. Uploads need HTTP Basic credentials, and the username picks
-how the Worker checks the password: `user` for a person's GitHub token, `actions`
+how the Worker checks the password: `users` for a person's GitHub token, `actions`
 for a GitHub Actions OIDC token.
 
 ## Deploy
@@ -32,7 +32,7 @@ for a GitHub Actions OIDC token.
 |---|---|---|---|
 | `CF_NIX_WORKER_BUCKET` | R2 bucket | yes | Stores `.narinfo` and `.nar` objects. |
 | `CF_NIX_WORKER_SECRET` | Secrets Store secret | conditional | `<key-name>:<base64>`, as emitted by `nix key generate-secret`. Required unless every uploader sends signed narinfo. A plain secret or var also works, e.g. for `wrangler dev`. |
-| `CF_NIX_WORKER_GITHUB_REPOSITORY` | var | for `user` | `owner/repo`. Users with push access to it can upload. |
+| `CF_NIX_WORKER_GITHUB_REPOSITORY` | var | for `users` | `owner/repo`. Users with push access to it can upload. |
 | `CF_NIX_WORKER_GITHUB_OWNER_ID` | var | for `actions` | Numeric ID of the GitHub org or user whose repos may upload (`gh api orgs/<org> --jq .id`, or `users/<user>`). |
 | `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE` | var | for `actions` | Expected `aud` of the OIDC token, e.g. the cache URL. Can't be GitHub's default. |
 | `CF_NIX_WORKER_GITHUB_OIDC_RULES` | var | for `actions` | JSON array of claim rules; see [CI: GitHub Actions OIDC](#ci-github-actions-oidc). |
@@ -41,7 +41,7 @@ for a GitHub Actions OIDC token.
 
 | Username | Password | The Worker checks | Enabled by |
 |---|---|---|---|
-| `user` | A GitHub user token (`gh auth token`) | The user has push access to `CF_NIX_WORKER_GITHUB_REPOSITORY` | `CF_NIX_WORKER_GITHUB_REPOSITORY` |
+| `users` | A GitHub user token (`gh auth token`) | The user has push access to `CF_NIX_WORKER_GITHUB_REPOSITORY` | `CF_NIX_WORKER_GITHUB_REPOSITORY` |
 | `actions` | A GitHub Actions OIDC token | Signature, issuer, audience, expiry and owner, then `CF_NIX_WORKER_GITHUB_OIDC_RULES` | `CF_NIX_WORKER_GITHUB_OWNER_ID`, `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE`, `CF_NIX_WORKER_GITHUB_OIDC_RULES` |
 
 A mechanism is off unless its bindings are set. With none set, every upload
@@ -53,7 +53,7 @@ credentials before a long `nix copy`:
 
 ```bash
 curl --netrc-file ~/.netrc https://<your-worker>.workers.dev/v1/whoami
-# {"kind":"user","subject":"octocat"}
+# {"kind":"users","subject":"octocat"}
 ```
 
 Nix sends credentials to a binary cache only from a netrc file (`netrc-file` in
@@ -69,7 +69,7 @@ Put your token in a netrc file readable only by you (`chmod 600 ~/.netrc`):
 
 ```
 machine <your-worker>.workers.dev
-  login user
+  login users
   password <output of gh auth token>
 ```
 

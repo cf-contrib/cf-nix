@@ -118,7 +118,7 @@ async fn check(config: &Config, token: &str) -> Result<Identity, AuthError> {
     }
 
     Ok(Identity {
-        kind: IdentityKind::User,
+        kind: IdentityKind::Users,
         subject: user.login,
         rule: None,
     })

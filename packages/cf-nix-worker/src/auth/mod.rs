@@ -16,7 +16,7 @@ mod oidc;
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Identity {
     pub kind: IdentityKind,
-    /// GitHub login (`user`) or the OIDC `sub` claim (`actions`).
+    /// GitHub login (`users`) or the OIDC `sub` claim (`actions`).
     pub subject: String,
     /// Index of the matching `CF_NIX_WORKER_GITHUB_OIDC_RULES` entry (`actions` only).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -27,7 +27,7 @@ pub struct Identity {
 #[serde(rename_all = "lowercase")]
 pub enum IdentityKind {
     /// A person, with their GitHub user token.
-    User,
+    Users,
     /// A GitHub Actions job, with its OIDC token.
     Actions,
 }
@@ -35,7 +35,7 @@ pub enum IdentityKind {
 impl fmt::Display for Identity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let kind = match self.kind {
-            IdentityKind::User => "user",
+            IdentityKind::Users => "users",
             IdentityKind::Actions => "actions",
         };
         write!(f, "{kind}:{}", self.subject)?;
@@ -131,8 +131,8 @@ impl Config {
 /// username selects how the password is verified.
 #[derive(Debug, PartialEq)]
 enum Credential {
-    /// `user:<GitHub user token>`
-    User(String),
+    /// `users:<GitHub user token>`
+    Users(String),
     /// `actions:<GitHub Actions OIDC JWT>`
     Actions(String),
 }
@@ -148,10 +148,10 @@ impl Credential {
         };
 
         match input.user_id.as_str() {
-            "user" => Ok(Credential::User(input.password)),
+            "users" => Ok(Credential::Users(input.password)),
             "actions" => Ok(Credential::Actions(input.password)),
             _ => Err(AuthError::Unauthorized(
-                "unknown username: use user or actions".to_string(),
+                "unknown username: use users or actions".to_string(),
             )),
         }
     }
@@ -173,10 +173,10 @@ pub async fn authorize(req: &Request, env: &Env) -> std::result::Result<Identity
     let header = req.headers().get("Authorization").unwrap_or_default();
 
     match Credential::parse(header.as_deref())? {
-        Credential::User(token) => {
+        Credential::Users(token) => {
             let Some(config) = config.github else {
                 return Err(AuthError::Unauthorized(
-                    "user auth is not enabled".to_string(),
+                    "users auth is not enabled".to_string(),
                 ));
             };
             github::authorize(&config, &token).await
@@ -255,14 +255,14 @@ mod tests {
     fn credential_dispatches_on_username() {
         let parse = |user, password| Credential::parse(Some(&basic(user, password)));
         assert_eq!(
-            parse("user", "gho_example"),
-            Ok(Credential::User("gho_example".to_string()))
+            parse("users", "gho_example"),
+            Ok(Credential::Users("gho_example".to_string()))
         );
         assert_eq!(
             parse("actions", "a.b.c"),
             Ok(Credential::Actions("a.b.c".to_string()))
         );
-        for user in ["someone", "x-auth-token", "github", "oidc"] {
+        for user in ["someone", "x-auth-token", "github", "oidc", "user"] {
             assert!(matches!(
                 parse(user, "secret"),
                 Err(AuthError::Unauthorized(_))
