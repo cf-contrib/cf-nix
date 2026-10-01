@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.4.0](https://github.com/cf-contrib/cf-nix-cache/compare/v0.3.0...v0.4.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* netrc entries use login users (was github) and login actions (was oidc); GET /auth/whoami is now GET /v1/whoami; error responses are JSON, { "error": "<code>", "message": "<reason>" }, instead of plain text. The action from this release writes login actions and calls /v1/whoami.
+
+### Features
+
+* add GET /healthz ([a7c145c](https://github.com/cf-contrib/cf-nix-cache/commit/a7c145c553effde737dcf13f6476e523c491b2a5))
+* align the API with cf-oidc-auth ([bf086f6](https://github.com/cf-contrib/cf-nix-cache/commit/bf086f6f7ca10cab602ce106c0b7c3c95656c2dc))
+
+
+### Bug Fixes
+
+* accept and keep the CA: field of content-addressed narinfo ([#84](https://github.com/cf-contrib/cf-nix-cache/issues/84)) ([523e424](https://github.com/cf-contrib/cf-nix-cache/commit/523e424efe2d329b1e1c80951227173a6fd95f03)), closes [#83](https://github.com/cf-contrib/cf-nix-cache/issues/83)
+* parse narinfo like Nix and store uploads as Nix sent them ([#87](https://github.com/cf-contrib/cf-nix-cache/issues/87)) ([d1b3a60](https://github.com/cf-contrib/cf-nix-cache/commit/d1b3a605f2c5aa5213afbcef8cea20d0dac3097f))
+
 ## [0.3.0](https://github.com/cf-contrib/cf-nix-cache/compare/v0.2.0...v0.3.0) (2026-10-01)
 
 
