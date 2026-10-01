@@ -131,7 +131,7 @@ async fn test_whoami_without_credentials() {
 
 #[tokio::test]
 async fn test_whoami_with_oidc_disabled() {
-    // The dev config only sets CF_NIX_CACHE_GITHUB_REPOSITORY, so OIDC auth is off.
+    // The dev config only sets CF_NIX_WORKER_GITHUB_REPOSITORY, so OIDC auth is off.
     let resp = helper::get_with_auth("auth/whoami", "oidc", "a.b.c")
         .await
         .expect("the request failed");

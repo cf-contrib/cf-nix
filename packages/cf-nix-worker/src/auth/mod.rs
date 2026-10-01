@@ -16,7 +16,7 @@ pub struct Identity {
     pub kind: IdentityKind,
     /// GitHub login (`github`) or the OIDC `sub` claim (`oidc`).
     pub subject: String,
-    /// Index of the matching `CF_NIX_CACHE_GITHUB_OIDC_RULES` entry (`oidc` only).
+    /// Index of the matching `CF_NIX_WORKER_GITHUB_OIDC_RULES` entry (`oidc` only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule: Option<usize>,
 }
@@ -80,9 +80,9 @@ impl AuthError {
 /// every authorized request is rejected with `401`.
 #[derive(Debug)]
 struct Config {
-    /// GitHub user tokens (`CF_NIX_CACHE_GITHUB_REPOSITORY`).
+    /// GitHub user tokens (`CF_NIX_WORKER_GITHUB_REPOSITORY`).
     github: Option<github::Config>,
-    /// GitHub Actions OIDC (`CF_NIX_CACHE_GITHUB_OWNER_ID`, `CF_NIX_CACHE_GITHUB_OIDC_AUDIENCE`, `CF_NIX_CACHE_GITHUB_OIDC_RULES`).
+    /// GitHub Actions OIDC (`CF_NIX_WORKER_GITHUB_OWNER_ID`, `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE`, `CF_NIX_WORKER_GITHUB_OIDC_RULES`).
     oidc: Option<oidc::Config>,
 }
 
@@ -97,15 +97,15 @@ impl Config {
     }
 
     fn from_vars(get: impl Fn(&str) -> Option<String>) -> std::result::Result<Self, AuthError> {
-        let github = get("CF_NIX_CACHE_GITHUB_REPOSITORY")
+        let github = get("CF_NIX_WORKER_GITHUB_REPOSITORY")
             .map(|repository| github::Config::parse(&repository))
             .transpose()
             .map_err(AuthError::Config)?;
 
         let oidc = match (
-            get("CF_NIX_CACHE_GITHUB_OWNER_ID"),
-            get("CF_NIX_CACHE_GITHUB_OIDC_AUDIENCE"),
-            get("CF_NIX_CACHE_GITHUB_OIDC_RULES"),
+            get("CF_NIX_WORKER_GITHUB_OWNER_ID"),
+            get("CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE"),
+            get("CF_NIX_WORKER_GITHUB_OIDC_RULES"),
         ) {
             (None, None, None) => None,
             (Some(owner_id), Some(audience), Some(rules)) => {
@@ -113,7 +113,7 @@ impl Config {
             }
             _ => {
                 return Err(AuthError::Config(
-                    "OIDC needs CF_NIX_CACHE_GITHUB_OWNER_ID, CF_NIX_CACHE_GITHUB_OIDC_AUDIENCE and CF_NIX_CACHE_GITHUB_OIDC_RULES"
+                    "OIDC needs CF_NIX_WORKER_GITHUB_OWNER_ID, CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE and CF_NIX_WORKER_GITHUB_OIDC_RULES"
                         .to_string(),
                 ));
             }
@@ -207,13 +207,13 @@ mod tests {
     #[test]
     fn config_enables_oidc_with_all_three_vars() {
         let config = Config::from_vars(vars(&[
-            ("CF_NIX_CACHE_GITHUB_OWNER_ID", "100000001"),
+            ("CF_NIX_WORKER_GITHUB_OWNER_ID", "100000001"),
             (
-                "CF_NIX_CACHE_GITHUB_OIDC_AUDIENCE",
+                "CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE",
                 "https://cache.example.com",
             ),
             (
-                "CF_NIX_CACHE_GITHUB_OIDC_RULES",
+                "CF_NIX_WORKER_GITHUB_OIDC_RULES",
                 r#"[{"ref":"refs/heads/main"}]"#,
             ),
         ]))
@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn config_rejects_partial_oidc() {
         let err = Config::from_vars(vars(&[(
-            "CF_NIX_CACHE_GITHUB_OIDC_AUDIENCE",
+            "CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE",
             "https://cache.example.com",
         )]))
         .unwrap_err();
@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn config_rejects_invalid_repository() {
-        let err = Config::from_vars(vars(&[("CF_NIX_CACHE_GITHUB_REPOSITORY", "not-a-repo")]))
+        let err = Config::from_vars(vars(&[("CF_NIX_WORKER_GITHUB_REPOSITORY", "not-a-repo")]))
             .unwrap_err();
         assert!(matches!(err, AuthError::Config(_)));
     }

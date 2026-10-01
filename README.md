@@ -107,8 +107,8 @@ Reads are public. Uploads (`PUT`) and `GET /auth/whoami` need HTTP Basic credent
 
 | Username       | Password                              | The Worker checks                                                       | Enabled by                                                       |
 | -------------- | ------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `github`       | A GitHub user token (`gh auth token`) | The user has push access to `CF_NIX_CACHE_GITHUB_REPOSITORY`                         | `CF_NIX_CACHE_GITHUB_REPOSITORY`                                              |
-| `oidc`         | A GitHub Actions OIDC token           | Signature, issuer, audience, expiry and owner, then `CF_NIX_CACHE_GITHUB_OIDC_RULES` | `CF_NIX_CACHE_GITHUB_OWNER_ID`, `CF_NIX_CACHE_GITHUB_OIDC_AUDIENCE`, `CF_NIX_CACHE_GITHUB_OIDC_RULES`   |
+| `github`       | A GitHub user token (`gh auth token`) | The user has push access to `CF_NIX_WORKER_GITHUB_REPOSITORY`                         | `CF_NIX_WORKER_GITHUB_REPOSITORY`                                              |
+| `oidc`         | A GitHub Actions OIDC token           | Signature, issuer, audience, expiry and owner, then `CF_NIX_WORKER_GITHUB_OIDC_RULES` | `CF_NIX_WORKER_GITHUB_OWNER_ID`, `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE`, `CF_NIX_WORKER_GITHUB_OIDC_RULES`   |
 
 A mechanism is off unless its variables are set. With none set, every upload gets `401`. An invalid configuration, such as only some of the OIDC variables, fails closed: uploads get `500` and the reason is logged.
 
@@ -123,7 +123,7 @@ curl --netrc-file ~/.netrc https://<your-worker>.workers.dev/auth/whoami
 
 ### People: GitHub token
 
-Anyone with push access to `CF_NIX_CACHE_GITHUB_REPOSITORY` can upload with their own GitHub token. To manage access by team, give the team write access to that repo. The default `gh` token works, and so does nix-auth's. A fine-grained token needs access to that repo.
+Anyone with push access to `CF_NIX_WORKER_GITHUB_REPOSITORY` can upload with their own GitHub token. To manage access by team, give the team write access to that repo. The default `gh` token works, and so does nix-auth's. A fine-grained token needs access to that repo.
 
 ```
 machine <your-worker>.workers.dev
@@ -137,7 +137,7 @@ GitHub App installation tokens (`ghs_…`, including `GITHUB_TOKEN` in Actions) 
 
 ### CI: GitHub Actions OIDC
 
-`CF_NIX_CACHE_GITHUB_OIDC_RULES` is a JSON array of rules, and a token is accepted if any rule matches. Within a rule every claim must match. `*` matches any run of characters, including `/`, except in `*_id` claims, which must match exactly. A claim missing from the token never matches.
+`CF_NIX_WORKER_GITHUB_OIDC_RULES` is a JSON array of rules, and a token is accepted if any rule matches. Within a rule every claim must match. `*` matches any run of characters, including `/`, except in `*_id` claims, which must match exactly. A claim missing from the token never matches.
 
 ```json
 [
@@ -146,7 +146,7 @@ GitHub App installation tokens (`ghs_…`, including `GITHUB_TOKEN` in Actions) 
 ]
 ```
 
-Every token must also come from a repo owned by `CF_NIX_CACHE_GITHUB_OWNER_ID`, because GitHub issues OIDC tokens to every repository on github.com. The token's audience must equal `CF_NIX_CACHE_GITHUB_OIDC_AUDIENCE` (a trailing `/` is ignored). The audience can't be GitHub's default `https://github.com/<owner>`, so a token requested for AWS or GCP doesn't work here.
+Every token must also come from a repo owned by `CF_NIX_WORKER_GITHUB_OWNER_ID`, because GitHub issues OIDC tokens to every repository on github.com. The token's audience must equal `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE` (a trailing `/` is ignored). The audience can't be GitHub's default `https://github.com/<owner>`, so a token requested for AWS or GCP doesn't work here.
 
 ```yaml
 permissions:
@@ -183,7 +183,7 @@ steps:
 
 **Auth:** HTTP Basic, see [Authentication](#authentication). `401` means missing or invalid credentials, `403` means valid credentials without upload access, and `502` means the GitHub API or GitHub's signing keys couldn't be reached.
 
-**Signing:** every stored narinfo carries a `Sig:`. If the uploader didn't sign and `CF_NIX_CACHE_SECRET` is set, the Worker signs the upload itself. Otherwise the PUT returns `400`.
+**Signing:** every stored narinfo carries a `Sig:`. If the uploader didn't sign and `CF_NIX_WORKER_SECRET` is set, the Worker signs the upload itself. Otherwise the PUT returns `400`.
 
 ## Configuration
 
@@ -191,17 +191,17 @@ steps:
 
 | Variable             | Required    | Description                                                                                                      |
 | -------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------- |
-| `CF_NIX_CACHE_GITHUB_REPOSITORY`  | for `github` | `owner/repo`. Users with push access to it can upload.                                                         |
-| `CF_NIX_CACHE_GITHUB_OWNER_ID`    | for `oidc`  | Numeric ID of the GitHub org or user whose repos may upload (`gh api orgs/<org> --jq .id`, or `users/<user>`).   |
-| `CF_NIX_CACHE_GITHUB_OIDC_AUDIENCE` | for `oidc` | Expected `aud` of the OIDC token, e.g. the cache URL. Can't be GitHub's default.                               |
-| `CF_NIX_CACHE_GITHUB_OIDC_RULES`  | for `oidc`  | JSON array of claim rules; see [CI: GitHub Actions OIDC](#ci-github-actions-oidc).                               |
-| `CF_NIX_CACHE_SECRET`         | conditional | `<key-name>:<base64>` — base64 decodes to 64 Ed25519 secret-key bytes (as emitted by `nix key generate-secret`). Required unless every uploader sends pre-signed narinfo. |
+| `CF_NIX_WORKER_GITHUB_REPOSITORY`  | for `github` | `owner/repo`. Users with push access to it can upload.                                                         |
+| `CF_NIX_WORKER_GITHUB_OWNER_ID`    | for `oidc`  | Numeric ID of the GitHub org or user whose repos may upload (`gh api orgs/<org> --jq .id`, or `users/<user>`).   |
+| `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE` | for `oidc` | Expected `aud` of the OIDC token, e.g. the cache URL. Can't be GitHub's default.                               |
+| `CF_NIX_WORKER_GITHUB_OIDC_RULES`  | for `oidc`  | JSON array of claim rules; see [CI: GitHub Actions OIDC](#ci-github-actions-oidc).                               |
+| `CF_NIX_WORKER_SECRET`         | conditional | `<key-name>:<base64>` — base64 decodes to 64 Ed25519 secret-key bytes (as emitted by `nix key generate-secret`). Required unless every uploader sends pre-signed narinfo. |
 
 ### Bindings
 
 | Binding      | Type      | Description                           |
 | ------------ | --------- | ------------------------------------- |
-| `CF_NIX_CACHE_BUCKET` | R2 bucket | Stores `.narinfo` and `.nar` objects. |
+| `CF_NIX_WORKER_BUCKET` | R2 bucket | Stores `.narinfo` and `.nar` objects. |
 
 ## Deployment
 
@@ -228,10 +228,10 @@ nix develop -c worker-build --dev   # build the Worker bundle into ./build
 nix develop -c wrangler dev         # serve locally via wrangler
 ```
 
-The integration tests run against `wrangler dev`, from `packages/cf-nix-worker`. Uploads need a GitHub token with push access to the `CF_NIX_CACHE_GITHUB_REPOSITORY` in `wrangler.toml`:
+The integration tests run against `wrangler dev`, from `packages/cf-nix-worker`. Uploads need a GitHub token with push access to the `CF_NIX_WORKER_GITHUB_REPOSITORY` in `wrangler.toml`:
 
 ```bash
-CF_NIX_CACHE_GITHUB_TOKEN=$(gh auth token) nix develop -c cargo test --features integration
+CF_NIX_WORKER_GITHUB_TOKEN=$(gh auth token) nix develop -c cargo test --features integration
 ```
 
 ## Dependencies

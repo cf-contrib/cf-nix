@@ -33,12 +33,12 @@ resource "cloudflare_worker_version" "nix_cache" {
   bindings = concat(
     [
       {
-        name        = "CF_NIX_CACHE_BUCKET"
+        name        = "CF_NIX_WORKER_BUCKET"
         type        = "r2_bucket"
         bucket_name = cloudflare_r2_bucket.nix.name
       },
       {
-        name = "CF_NIX_CACHE_SECRET"
+        name = "CF_NIX_WORKER_SECRET"
         type = "secret_text"
         text = var.nix_secret
       },
@@ -56,10 +56,10 @@ resource "cloudflare_worker_version" "nix_cache" {
 
 locals {
   auth_vars = {
-    CF_NIX_CACHE_GITHUB_REPOSITORY    = var.github_repository
-    CF_NIX_CACHE_GITHUB_OWNER_ID      = length(var.github_oidc_rules) == 0 ? null : var.github_owner_id
-    CF_NIX_CACHE_GITHUB_OIDC_AUDIENCE = length(var.github_oidc_rules) == 0 ? null : var.github_oidc_audience
-    CF_NIX_CACHE_GITHUB_OIDC_RULES    = length(var.github_oidc_rules) == 0 ? null : jsonencode(var.github_oidc_rules)
+    CF_NIX_WORKER_GITHUB_REPOSITORY    = var.github_repository
+    CF_NIX_WORKER_GITHUB_OWNER_ID      = length(var.github_oidc_rules) == 0 ? null : var.github_owner_id
+    CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE = length(var.github_oidc_rules) == 0 ? null : var.github_oidc_audience
+    CF_NIX_WORKER_GITHUB_OIDC_RULES    = length(var.github_oidc_rules) == 0 ? null : jsonencode(var.github_oidc_rules)
   }
 }
 
