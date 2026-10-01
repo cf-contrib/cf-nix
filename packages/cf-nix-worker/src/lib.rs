@@ -1,10 +1,9 @@
-use std::{borrow::Cow, fmt::Write};
+use std::fmt::Write;
 
 mod auth;
 mod model;
 
-use model::{serialize_narinfo, split_ca, NarInfoContext, NarInfoSigKey, Validate};
-use narinfo::*;
+use model::{NarInfo, NarInfoContext, NarInfoSigKey, Validate, append_sig};
 use worker::*;
 
 #[event(fetch)]
@@ -72,15 +71,7 @@ async fn check_health(env: &Env) -> std::result::Result<(), String> {
 ///
 /// Returns the cache configuration in the format expected by the Nix client.
 fn get_nix_cache_info(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
-    let info = NixCacheInfo {
-        store_dir: Cow::from("/nix/store"),
-        wants_mass_query: true,
-        priority: 40,
-    };
-
-    let mut data = String::new();
-    info.serialize_into(&mut data).unwrap();
-    Response::ok(data)
+    Response::ok("StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 40\n")
 }
 
 /// POST /
@@ -152,25 +143,14 @@ async fn get_narinfo(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let Some(body) = object.body() else {
         return Response::error("object has no body", 500);
     };
-    let body = body.text().await?;
-    let (body, ca) = match split_ca(&body) {
-        Ok(split) => split,
-        Err(err) => {
-            console_error!("narinfo CA parse failed: {err}");
-            return Response::error("object has an invalid body", 500);
-        }
-    };
-    let info = match NarInfo::parse(&body) {
-        Ok(info) => info,
-        Err(err) => {
-            console_error!("narinfo parse failed: {err:?}");
-            return Response::error("object has an invalid body", 500);
-        }
-    };
-
-    let mut data = serialize_narinfo(&info, ca.as_deref());
-    // The library does not emit a newline which causes the nix client to fail
-    writeln!(data).unwrap();
+    // Served as stored: the text Nix uploaded, plus a Sig: line if the Worker
+    // signed it.
+    let mut data = body.text().await?;
+    // Nix needs a newline after the last line. Objects stored before the
+    // Worker kept uploads as-is (<= 0.3) don't end with one.
+    if !data.ends_with('\n') {
+        writeln!(data).unwrap();
+    }
 
     let mut response = Response::ok(data)?;
     response
@@ -197,16 +177,9 @@ async fn put_narinfo(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     };
 
     let body = req.text().await?;
-    let (body, ca) = match split_ca(&body) {
-        Ok(split) => split,
-        Err(msg) => return Response::error(msg, 400),
-    };
-    let mut info = match NarInfo::parse(&body) {
+    let info = match NarInfo::parse(&body) {
         Ok(info) => info,
-        Err(err) => {
-            console_error!("narinfo parse failed: {err:?}");
-            return Response::error("invalid body", 400);
-        }
+        Err(msg) => return Response::error(msg, 400),
     };
     let info_ctx = NarInfoContext {
         hash: hash.strip_suffix(".narinfo").unwrap_or(hash).to_string(),
@@ -217,7 +190,10 @@ async fn put_narinfo(mut req: Request, ctx: RouteContext<()>) -> Result<Response
 
     // Stored narinfo must always carry a Sig:. If the uploader didn't provide
     // one, sign with CF_NIX_WORKER_SECRET; if neither path produces a signature, reject.
-    if info.sigs.is_empty() {
+    // The text is stored as Nix sent it, so no field is dropped or reordered.
+    let data = if !info.sigs.is_empty() {
+        body
+    } else {
         let secret = match signing_secret(&ctx.env).await {
             Ok(Some(secret)) => secret,
             Ok(None) => {
@@ -232,15 +208,13 @@ async fn put_narinfo(mut req: Request, ctx: RouteContext<()>) -> Result<Response
             }
         };
         match NarInfoSigKey::parse(&secret).and_then(|key| key.sign(&info)) {
-            Ok(sig) => info.sigs.push(sig),
+            Ok(sig) => append_sig(&body, &sig),
             Err(err) => {
                 console_error!("narinfo signing failed: {err}");
                 return Response::error("server signing failure", 500);
             }
         }
-    }
-
-    let data = serialize_narinfo(&info, ca.as_deref());
+    };
 
     let bucket = ctx.env.bucket("CF_NIX_WORKER_BUCKET")?;
     bucket.put(key, data).execute().await?;
