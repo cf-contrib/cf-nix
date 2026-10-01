@@ -1,5 +1,5 @@
 [package]
-name = "nix-cache"
+name = "cf-nix-worker"
 version = "0.2.0"
 edition = "2021"
 authors = ["iamralch"]

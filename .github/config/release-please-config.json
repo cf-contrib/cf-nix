@@ -3,7 +3,7 @@
   "packages": {
     ".": {
       "release-type": "rust",
-      "package-name": "nix-cache",
+      "package-name": "cf-nix-cache",
       "include-v-in-tag": true,
       "include-v-in-release-name": true,
       "include-component-in-tag": false,

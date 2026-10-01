@@ -1,3 +1,3 @@
 [workspace]
-members = ["packages/cf-nix-cache-worker"]
+members = ["packages/cf-nix-worker"]
 resolver = "2"
