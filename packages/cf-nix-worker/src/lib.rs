@@ -182,13 +182,20 @@ async fn put_narinfo(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     // Stored narinfo must always carry a Sig:. If the uploader didn't provide
     // one, sign with CF_NIX_WORKER_SECRET; if neither path produces a signature, reject.
     if info.sigs.is_empty() {
-        let Ok(secret) = ctx.env.var("CF_NIX_WORKER_SECRET") else {
-            return Response::error(
-                "narinfo must be signed: no Sig: provided and CF_NIX_WORKER_SECRET is not configured",
-                400,
-            );
+        let secret = match signing_secret(&ctx.env).await {
+            Ok(Some(secret)) => secret,
+            Ok(None) => {
+                return Response::error(
+                    "narinfo must be signed: no Sig: provided and CF_NIX_WORKER_SECRET is not configured",
+                    400,
+                );
+            }
+            Err(err) => {
+                console_error!("reading CF_NIX_WORKER_SECRET failed: {err}");
+                return Response::error("server signing failure", 500);
+            }
         };
-        match NarInfoSigKey::parse(&secret.to_string()).and_then(|key| key.sign(&info)) {
+        match NarInfoSigKey::parse(&secret).and_then(|key| key.sign(&info)) {
             Ok(sig) => info.sigs.push(sig),
             Err(err) => {
                 console_error!("narinfo signing failed: {err}");
@@ -204,6 +211,20 @@ async fn put_narinfo(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     bucket.put(key, data).execute().await?;
 
     Response::empty()
+}
+
+/// Reads the narinfo signing key, `CF_NIX_WORKER_SECRET`.
+///
+/// Deployments bind it from Secrets Store, so the key never passes through
+/// Terraform. `wrangler dev` and plain `secret_text` bindings are read as a var.
+async fn signing_secret(env: &Env) -> Result<Option<String>> {
+    if let Ok(store) = env.secret_store("CF_NIX_WORKER_SECRET") {
+        return store.get().await;
+    }
+    Ok(env
+        .var("CF_NIX_WORKER_SECRET")
+        .ok()
+        .map(|secret| secret.to_string()))
 }
 
 /// HEAD /nar/:hash.nar — used by Nix uploaders to skip already-cached NARs.

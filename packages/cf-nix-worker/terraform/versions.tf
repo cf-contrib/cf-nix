@@ -1,3 +1,5 @@
+# Providers are configured by the caller, or by default when used as a root
+# module: cloudflare reads CLOUDFLARE_API_TOKEN, github GITHUB_TOKEN (optional).
 terraform {
   required_version = ">= 1.9.0"
 

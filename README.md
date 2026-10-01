@@ -195,7 +195,7 @@ steps:
 | `CF_NIX_WORKER_GITHUB_OWNER_ID`    | for `oidc`  | Numeric ID of the GitHub org or user whose repos may upload (`gh api orgs/<org> --jq .id`, or `users/<user>`).   |
 | `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE` | for `oidc` | Expected `aud` of the OIDC token, e.g. the cache URL. Can't be GitHub's default.                               |
 | `CF_NIX_WORKER_GITHUB_OIDC_RULES`  | for `oidc`  | JSON array of claim rules; see [CI: GitHub Actions OIDC](#ci-github-actions-oidc).                               |
-| `CF_NIX_WORKER_SECRET`         | conditional | `<key-name>:<base64>` — base64 decodes to 64 Ed25519 secret-key bytes (as emitted by `nix key generate-secret`). Required unless every uploader sends pre-signed narinfo. |
+| `CF_NIX_WORKER_SECRET`         | conditional | `<key-name>:<base64>` — base64 decodes to 64 Ed25519 secret-key bytes (as emitted by `nix key generate-secret`). Required unless every uploader sends pre-signed narinfo. A Secrets Store binding in production (the Terraform module binds it that way); a plain secret or var also works, e.g. for `wrangler dev`. |
 
 ### Bindings
 
@@ -205,14 +205,23 @@ steps:
 
 ## Deployment
 
-Use Terraform with the Cloudflare provider. The [`examples/terraform/`](examples/terraform/) directory has a full example that pulls the Worker bundle from this repo's GitHub Releases and deploys it to Workers + R2.
+Use the Terraform / OpenTofu module in [`packages/cf-nix-worker/terraform`](packages/cf-nix-worker/terraform). It deploys the Worker bundle from this repo's GitHub Releases to Workers + R2, binds the signing key from Secrets Store so it never enters Terraform state, and sets the auth bindings:
 
-CI publishes two files to GitHub Releases:
+```hcl
+module "cf_nix_cache" {
+  source = "git::https://github.com/cf-contrib/cf-nix-cache.git//packages/cf-nix-worker/terraform?ref=v0.3.0" # x-release-please-version
 
-- `index.js`
-- `index_bg.wasm`
+  account_id         = var.account_id
+  hostname           = "cf-nix-cache.example.workers.dev"
+  bucket_name        = "nix-cache"
+  signing_key_secret = { secret_store_id = var.secret_store_id, secret_name = "cf-nix-cache-signing-key" }
+  github_repository  = "example-org/nix-cache-access"
+}
+```
 
-Both are required, because `index.js` imports `./index_bg.wasm` at runtime.
+See the [module's README](packages/cf-nix-worker/terraform#readme) for every input, and for migrating from the old `examples/terraform`.
+
+Each release publishes `index.js` and `index_bg.wasm`. Both are required, because `index.js` imports `./index_bg.wasm` at runtime.
 
 > `packages/cf-nix-worker/wrangler.toml` is for local testing, not production.
 
