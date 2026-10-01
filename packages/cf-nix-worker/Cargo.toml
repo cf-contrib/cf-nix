@@ -1,0 +1,37 @@
+[package]
+name = "cf-nix-worker"
+version = "0.2.0"
+edition = "2021"
+authors = ["iamralch"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+http-auth-basic = "0.3.7"
+narinfo = "1.0.1"
+worker = { version = "0.8" }
+worker-macros = { version = "0.8" }
+
+# Used for validating NarHash/FileHash formats in narinfo uploads.
+base64 = "0.23.0"
+
+# Used for server-side narinfo signing (issue #13).
+ed25519-dalek = { version = "3.0", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.11", default-features = false }
+
+# Used for GitHub identity auth on uploads (issue #67): OIDC rules, JWT
+# claims, and GitHub API / JWKS responses. Already in the tree via `worker`.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# WebCrypto bindings for RS256 verification of GitHub Actions OIDC tokens,
+# so no RSA crate ends up in the wasm bundle.
+web-sys = { version = "0.3", features = ["Crypto", "CryptoKey", "SubtleCrypto", "WorkerGlobalScope"] }
+
+[dev-dependencies]
+reqwest = "0.13.4"
+tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
+
+[features]
+# Opt-in integration tests which require `wrangler dev` running locally.
+integration = []

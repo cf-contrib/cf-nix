@@ -1,4 +1,4 @@
-name = "nix-cache"
+name = "cf-nix-cache"
 main = "build/index.js"
 compatibility_date = "2026-05-14"
 

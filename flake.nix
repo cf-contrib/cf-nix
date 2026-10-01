@@ -1,5 +1,5 @@
 {
-  description = "nix-cache - Cloudflare-native Nix binary cache using Workers, R2, and Rust.";
+  description = "cf-nix-cache - Cloudflare-native Nix binary cache using Workers, R2, and Rust.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -29,7 +29,7 @@
       in
       {
         devShells.default = pkgs.mkShell {
-          name = "nix-cache";
+          name = "cf-nix-cache";
           packages = [
             pkgs.pkg-config
             pkgs.wrangler

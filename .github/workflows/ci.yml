@@ -58,11 +58,12 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v23
       - name: Build with Nix
+        working-directory: packages/cf-nix-worker
         run: nix develop -c worker-build --release
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.release.outputs.tag_name }}
           files: |
-            build/index.js
-            build/index_bg.wasm
+            packages/cf-nix-worker/build/index.js
+            packages/cf-nix-worker/build/index_bg.wasm

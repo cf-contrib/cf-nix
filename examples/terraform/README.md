@@ -1,4 +1,4 @@
-# Deploying nix-cache with Terraform
+# Deploying cf-nix-cache with Terraform
 
 Deploys the Worker bundle published to this repo's GitHub Releases to Cloudflare
 Workers + R2.
