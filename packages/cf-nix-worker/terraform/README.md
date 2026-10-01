@@ -61,8 +61,9 @@ enters Terraform state or the plan. Clients need the matching public key in
 `trusted-public-keys`: get it with
 `nix key convert-secret-to-public < secret-key-file`.
 
-Then set up upload credentials as described in the root README's
-[Authentication](../../../README.md#authentication) section.
+Then set up upload credentials as described in the Worker's
+[Authentication](../README.md#authentication) section, and push with
+`nix copy --to '<url>?compression=none'`: the cache stores uncompressed NARs.
 
 ## Inputs
 
