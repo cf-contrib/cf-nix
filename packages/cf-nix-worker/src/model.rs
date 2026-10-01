@@ -4,7 +4,7 @@ use narinfo::{NarInfo, Sig};
 
 /// Parsed Nix signing secret used to produce `.narinfo` `Sig:` entries.
 ///
-/// This corresponds to `CF_NIX_CACHE_SECRET` in the form `<key-name>:<base64>`,
+/// This corresponds to `CF_NIX_WORKER_SECRET` in the form `<key-name>:<base64>`,
 /// where the base64 decodes to 64 Ed25519 key bytes (secret + public) as emitted
 /// by `nix key generate-secret`.
 pub struct NarInfoSigKey {
@@ -20,22 +20,22 @@ impl NarInfoSigKey {
         //   <key-name>:<base64>
         // where <base64> is 64 bytes (secret + public) for Ed25519.
         let (key_name, b64) = secret.split_once(':').ok_or_else(|| {
-            "CF_NIX_CACHE_SECRET must be in the format <key-name>:<base64>".to_string()
+            "CF_NIX_WORKER_SECRET must be in the format <key-name>:<base64>".to_string()
         })?;
 
         let key_name = key_name.trim();
         let b64 = b64.trim();
 
         if key_name.is_empty() {
-            return Err("CF_NIX_CACHE_SECRET key name must not be empty".to_string());
+            return Err("CF_NIX_WORKER_SECRET key name must not be empty".to_string());
         }
 
         let decoded = STANDARD
             .decode(b64)
-            .map_err(|_| "CF_NIX_CACHE_SECRET must contain valid base64 key bytes".to_string())?;
+            .map_err(|_| "CF_NIX_WORKER_SECRET must contain valid base64 key bytes".to_string())?;
 
         if decoded.len() != 64 {
-            return Err("CF_NIX_CACHE_SECRET base64 must decode to 64 bytes".to_string());
+            return Err("CF_NIX_WORKER_SECRET base64 must decode to 64 bytes".to_string());
         }
 
         Ok(Self {
