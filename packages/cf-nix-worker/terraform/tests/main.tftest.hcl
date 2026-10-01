@@ -65,7 +65,7 @@ run "defaults" {
   }
 
   assert {
-    condition     = output.release_tag == "v0.3.0"
+    condition     = output.release_tag == var.release_tag
     error_message = "the release bundle should be deployed"
   }
 }
