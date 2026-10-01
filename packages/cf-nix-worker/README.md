@@ -53,8 +53,9 @@ Nix sends credentials to a binary cache only from a netrc file (`netrc-file` in
 
 Anyone with push access to `CF_NIX_WORKER_GITHUB_REPOSITORY` can upload with
 their own GitHub token. To manage access by team, give the team write access to
-that repo. The default `gh` token works, and so does nix-auth's. A fine-grained
-token needs access to that repo.
+that repo.
+
+Put your token in a netrc file readable only by you (`chmod 600 ~/.netrc`):
 
 ```
 machine <your-worker>.workers.dev
@@ -62,9 +63,15 @@ machine <your-worker>.workers.dev
   password <output of gh auth token>
 ```
 
-Point Nix at it with `netrc-file = /home/you/.netrc` in `nix.conf`.
-[gh-nix](https://github.com/gh-extensions/gh-nix) is a planned `gh` extension
-that will do this for you ([gh-extensions/gh-nix#1](https://github.com/gh-extensions/gh-nix/issues/1)).
+and point Nix at it with `netrc-file = /home/you/.netrc` in `nix.conf`.
+
+`gh auth token` usually has `repo` scope on every repo you can reach and never
+expires. For a narrower credential, use a
+[fine-grained token](https://github.com/settings/personal-access-tokens/new)
+limited to `CF_NIX_WORKER_GITHUB_REPOSITORY`, with an expiry.
+[gh-nix](https://github.com/gh-extensions/gh-nix) (planned,
+[gh-extensions/gh-nix#1](https://github.com/gh-extensions/gh-nix/issues/1))
+will avoid the plain-text file altogether.
 
 The Worker checks the token with the GitHub API and reuses the result for 5
 minutes, keyed by a hash of the token. Removing someone's push access takes
