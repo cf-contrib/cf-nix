@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use serde::Deserialize;
 use worker::{Date, Fetch, Headers, Method, Request, RequestInit, Response};
 
-use super::{AuthError, Identity, IdentityKind, cache::TtlCache};
+use super::{AuthError, Identity, IdentityKind, cache::IdentityCache};
 
 const API_URL: &str = "https://api.github.com";
 
@@ -12,7 +12,7 @@ const API_URL: &str = "https://api.github.com";
 const CACHE_TTL_MS: u64 = 5 * 60 * 1000;
 
 thread_local! {
-    static CACHE: RefCell<TtlCache<Result<Identity, AuthError>>> = RefCell::new(TtlCache::new());
+    static CACHE: RefCell<IdentityCache> = RefCell::new(IdentityCache::new());
 }
 
 /// GitHub user token auth: anyone with push access to `repository` can upload.
@@ -61,7 +61,7 @@ struct Permissions {
 pub(super) async fn authorize(config: &Config, token: &str) -> Result<Identity, AuthError> {
     reject_installation_token(token)?;
 
-    let key = TtlCache::<()>::key(token);
+    let key = IdentityCache::key(token);
     let now = Date::now().as_millis();
     if let Some(result) = CACHE.with_borrow(|cache| cache.get(&key, now)) {
         return result;

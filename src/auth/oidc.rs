@@ -11,7 +11,7 @@ use worker::{
     wasm_bindgen_futures::JsFuture,
 };
 
-use super::{AuthError, Identity, IdentityKind, cache::TtlCache};
+use super::{AuthError, Identity, IdentityKind, cache::IdentityCache};
 
 const ISSUER: &str = "https://token.actions.githubusercontent.com";
 const JWKS_URL: &str = "https://token.actions.githubusercontent.com/.well-known/jwks";
@@ -26,7 +26,7 @@ const JWKS_MIN_REFETCH_MS: u64 = 60 * 1000;
 
 thread_local! {
     static JWKS: RefCell<Option<KeySet>> = const { RefCell::new(None) };
-    static CACHE: RefCell<TtlCache<Result<Identity, AuthError>>> = RefCell::new(TtlCache::new());
+    static CACHE: RefCell<IdentityCache> = RefCell::new(IdentityCache::new());
 }
 
 /// GitHub Actions OIDC auth. Same matching semantics as cf-oidc-auth.
@@ -279,7 +279,7 @@ fn check_claims(
 /// Verifies a GitHub Actions OIDC token and matches it against the rules.
 pub(super) async fn authorize(config: &Config, jwt: &str) -> Result<Identity, AuthError> {
     let now_ms = Date::now().as_millis();
-    let key = TtlCache::<()>::key(jwt);
+    let key = IdentityCache::key(jwt);
     if let Some(result) = CACHE.with_borrow(|cache| cache.get(&key, now_ms)) {
         return result;
     }
