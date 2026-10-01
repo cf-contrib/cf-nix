@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ed25519_dalek::{Signature, Signer, SigningKey as DalekSigningKey};
 use narinfo::{NarInfo, Sig};
@@ -180,6 +182,55 @@ impl Validate for NarInfo<'_> {
     }
 }
 
+/// Splits the `CA:` field off a narinfo body.
+///
+/// Content-addressed paths (`nix store add`, fixed-output derivation outputs)
+/// carry `CA: <method>:<hash>`, which the `narinfo` crate rejects as an unknown
+/// key. Nix doesn't sign it, so the rest parses, validates and signs as before,
+/// and `serialize_narinfo` writes it back. Returns the body without the `CA:`
+/// line, and its value.
+pub fn split_ca(body: &str) -> Result<(String, Option<String>), String> {
+    let mut rest = String::with_capacity(body.len());
+    let mut ca = None;
+    for line in body.lines() {
+        let Some(value) = line.strip_prefix("CA:") else {
+            rest.push_str(line);
+            rest.push('\n');
+            continue;
+        };
+        if ca.is_some() {
+            return Err("CA must appear at most once".to_string());
+        }
+        let value = value.trim();
+        validate_ca(value)?;
+        ca = Some(value.to_string());
+    }
+    Ok((rest, ca))
+}
+
+/// `CA` is `text:<hash>` or `fixed:<hash>`, where `<hash>` may carry a method
+/// (`r:`, `git:`) and is any algorithm: fixed-output derivations aren't limited
+/// to SHA-256.
+fn validate_ca(value: &str) -> Result<(), String> {
+    let hash = value
+        .strip_prefix("text:")
+        .or_else(|| value.strip_prefix("fixed:"));
+    match hash {
+        Some(hash) if !hash.is_empty() && !hash.contains(char::is_whitespace) => Ok(()),
+        _ => Err("CA must be text:<hash> or fixed:<hash>".to_string()),
+    }
+}
+
+/// Serializes a narinfo and its `CA:` field, without a trailing newline.
+pub fn serialize_narinfo(info: &NarInfo<'_>, ca: Option<&str>) -> String {
+    let mut data = String::new();
+    info.serialize_into(&mut data).unwrap();
+    if let Some(ca) = ca {
+        write!(data, "\nCA: {ca}").unwrap();
+    }
+    data
+}
+
 /// Whether `name` is a store path basename: a 32-character Nix-base32 hash, a
 /// dash, and a name of the characters Nix allows in store path names.
 fn is_store_path_basename(name: &str) -> bool {
@@ -343,6 +394,23 @@ Deriver: lhbc5cbhqmaq5mq5171lxhkr1qf0mkbr-hello-2.12.3.drv
 ";
     const NIX_SIG: &str =
         "Asy0nOGVV5q3qTjAICHgn7g7Xdm8fxYPv90mmG1LhBdmgFwr8PH9nSoYNNHgCthL34dgBdnLAorV/4cJzJoiCg==";
+
+    /// A content-addressed path (`nix store add`), written and signed by Nix
+    /// the same way. It has no references, and a `CA:` line.
+    const NIX_SIGNED_CA: &str = "\
+StorePath: /nix/store/2h2g7i4x6gsadn2s7vi0af6g8b24n584-cf-nix-cache-ca
+URL: nar/1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq.nar
+Compression: none
+FileHash: sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
+FileSize: 136
+NarHash: sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
+NarSize: 136
+References: 
+CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
+";
+    const NIX_CA: &str = "fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq";
+    const NIX_CA_SIG: &str =
+        "qNaG672O6KwKQkp4RZ6aG1jFsCyi7DsOmZtuwvHgMXuXFUpo0cBKBsGQFL2qLM6oW+9vN/Xk2/NpYle7sdq7BA==";
 
     fn narinfo() -> NarInfo<'static> {
         NarInfo::builder()
@@ -517,5 +585,59 @@ Deriver: lhbc5cbhqmaq5mq5171lxhkr1qf0mkbr-hello-2.12.3.drv
         let sig = key.sign(&info).expect("should sign");
         assert_eq!(sig.key_name, "cache.example.org-1");
         assert_eq!(sig.sig, NIX_SIG);
+    }
+
+    #[test]
+    fn split_ca_extracts_ca_and_the_rest_validates() {
+        let (rest, ca) = split_ca(NIX_SIGNED_CA).expect("CA should split");
+        assert_eq!(ca.as_deref(), Some(NIX_CA));
+        assert!(!rest.contains("CA:"));
+
+        let info = NarInfo::parse(&rest).expect("NarInfo should parse");
+        let ctx = NarInfoContext {
+            hash: "2h2g7i4x6gsadn2s7vi0af6g8b24n584".to_string(),
+        };
+        assert_eq!(info.validate(&ctx), Ok(()));
+    }
+
+    #[test]
+    fn split_ca_without_ca_keeps_the_body() {
+        let (rest, ca) = split_ca(NIX_SIGNED).expect("body should split");
+        assert_eq!(ca, None);
+        assert_eq!(rest, NIX_SIGNED);
+    }
+
+    #[test]
+    fn split_ca_rejects_bad_ca() {
+        for line in [
+            "CA: sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq",
+            "CA: fixed:",
+            "CA: fixed:r:sha256:1yk2 kns0dq14",
+            "CA: text:sha256:abc\nCA: text:sha256:abc",
+        ] {
+            let body = format!("{NIX_SIGNED}{line}\n");
+            let err = split_ca(&body).unwrap_err();
+            assert!(err.contains("CA"), "{line}: {err}");
+        }
+    }
+
+    #[test]
+    fn serialize_narinfo_writes_ca_back() {
+        let (rest, ca) = split_ca(NIX_SIGNED_CA).expect("CA should split");
+        let info = NarInfo::parse(&rest).expect("NarInfo should parse");
+        let data = serialize_narinfo(&info, ca.as_deref());
+        assert!(data.ends_with(&format!("\nCA: {NIX_CA}")), "{data}");
+
+        let (_, ca) = split_ca(&data).expect("serialized narinfo should split");
+        assert_eq!(ca.as_deref(), Some(NIX_CA));
+    }
+
+    #[test]
+    fn sign_matches_nix_for_a_content_addressed_path() {
+        let (rest, _) = split_ca(NIX_SIGNED_CA).expect("CA should split");
+        let info = NarInfo::parse(&rest).expect("NarInfo should parse");
+        let key = NarInfoSigKey::parse(TEST_KEY).expect("key should parse");
+        let sig = key.sign(&info).expect("should sign");
+        assert_eq!(sig.sig, NIX_CA_SIG);
     }
 }

@@ -68,6 +68,31 @@ async fn test_post_narinfo() {
 }
 
 #[tokio::test]
+async fn test_get_content_addressed_narinfo() {
+    // Written and signed by Nix for a `nix store add` path: it has a CA: line.
+    let file_type = "text/x-nix-narinfo";
+    let file_name = "2h2g7i4x6gsadn2s7vi0af6g8b24n584.narinfo";
+    let file_path = format!("tests/fixture/{file_name}");
+    let file_data = std::fs::read_to_string(file_path).unwrap();
+
+    let put_resp = helper::put(file_name, file_type, file_data)
+        .await
+        .expect("the request failed");
+    assert_eq!(put_resp.status(), 200);
+
+    let get_resp = helper::get(file_name).await.expect("the request failed");
+    assert_eq!(get_resp.status(), 200);
+
+    let resp_body = get_resp.text().await.expect("the body failed");
+    assert!(
+        resp_body
+            .lines()
+            .any(|line| line == "CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq"),
+        "{resp_body}"
+    );
+}
+
+#[tokio::test]
 async fn test_get_narinfo_not_found() {
     let get_resp = helper::get("j6m2qd3dbsmhq0mw14yb9wijnm4pq6z1.narinfo")
         .await

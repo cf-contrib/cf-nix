@@ -1,0 +1,10 @@
+StorePath: /nix/store/2h2g7i4x6gsadn2s7vi0af6g8b24n584-cf-nix-cache-ca
+URL: nar/1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq.nar
+Compression: none
+FileHash: sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
+FileSize: 136
+NarHash: sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
+NarSize: 136
+References: 
+Sig: cache.example.org-1:qNaG672O6KwKQkp4RZ6aG1jFsCyi7DsOmZtuwvHgMXuXFUpo0cBKBsGQFL2qLM6oW+9vN/Xk2/NpYle7sdq7BA==
+CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq

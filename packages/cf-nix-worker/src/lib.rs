@@ -3,7 +3,7 @@ use std::{borrow::Cow, fmt::Write};
 mod auth;
 mod model;
 
-use model::{NarInfoContext, NarInfoSigKey, Validate};
+use model::{serialize_narinfo, split_ca, NarInfoContext, NarInfoSigKey, Validate};
 use narinfo::*;
 use worker::*;
 
@@ -127,6 +127,13 @@ async fn get_narinfo(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
         return Response::error("object has no body", 500);
     };
     let body = body.text().await?;
+    let (body, ca) = match split_ca(&body) {
+        Ok(split) => split,
+        Err(err) => {
+            console_error!("narinfo CA parse failed: {err}");
+            return Response::error("object has an invalid body", 500);
+        }
+    };
     let info = match NarInfo::parse(&body) {
         Ok(info) => info,
         Err(err) => {
@@ -135,8 +142,7 @@ async fn get_narinfo(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
         }
     };
 
-    let mut data = String::new();
-    info.serialize_into(&mut data).unwrap();
+    let mut data = serialize_narinfo(&info, ca.as_deref());
     // The library does not emit a newline which causes the nix client to fail
     writeln!(data).unwrap();
 
@@ -165,6 +171,10 @@ async fn put_narinfo(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     };
 
     let body = req.text().await?;
+    let (body, ca) = match split_ca(&body) {
+        Ok(split) => split,
+        Err(msg) => return Response::error(msg, 400),
+    };
     let mut info = match NarInfo::parse(&body) {
         Ok(info) => info,
         Err(err) => {
@@ -204,8 +214,7 @@ async fn put_narinfo(mut req: Request, ctx: RouteContext<()>) -> Result<Response
         }
     }
 
-    let mut data = String::new();
-    info.serialize_into(&mut data).unwrap();
+    let data = serialize_narinfo(&info, ca.as_deref());
 
     let bucket = ctx.env.bucket("CF_NIX_WORKER_BUCKET")?;
     bucket.put(key, data).execute().await?;
