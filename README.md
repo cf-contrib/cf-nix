@@ -119,7 +119,7 @@ curl --netrc-file ~/.netrc https://<your-worker>.workers.dev/auth/whoami
 # {"kind":"github","subject":"octocat"}
 ```
 
-[gh-nix](https://github.com/gh-extensions/gh-nix) is a planned `gh` extension that will set this up for you ([gh-extensions/gh-nix#1](https://github.com/gh-extensions/gh-nix/issues/1)). Until it ships, write the netrc entries by hand as below.
+In GitHub Actions, the [cf-nix-cache action](packages/cf-nix-action) sets up the `oidc` credentials for you. For people, [gh-nix](https://github.com/gh-extensions/gh-nix) is a planned `gh` extension that will set up the `github` credentials ([gh-extensions/gh-nix#1](https://github.com/gh-extensions/gh-nix/issues/1)). Until it ships, write the netrc entry by hand as below.
 
 ### People: GitHub token
 
@@ -148,6 +148,8 @@ GitHub App installation tokens (`ghs_…`, including `GITHUB_TOKEN` in Actions) 
 
 Every token must also come from a repo owned by `CF_NIX_WORKER_GITHUB_OWNER_ID`, because GitHub issues OIDC tokens to every repository on github.com. The token's audience must equal `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE` (a trailing `/` is ignored). The audience can't be GitHub's default `https://github.com/<owner>`, so a token requested for AWS or GCP doesn't work here.
 
+In a workflow, the [cf-nix-cache action](packages/cf-nix-action) gets the job's OIDC token, checks it against `/auth/whoami`, and points Nix at a netrc file holding it:
+
 ```yaml
 permissions:
   contents: read
@@ -155,18 +157,13 @@ permissions:
 
 steps:
   # ... build ...
-  - name: Authenticate to the Nix cache
-    run: |
-      token=$(curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-        "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://<your-worker>.workers.dev" | jq -r .value)
-      echo "::add-mask::$token"
-      printf 'machine <your-worker>.workers.dev\n  login oidc\n  password %s\n' "$token" > "$RUNNER_TEMP/netrc"
-      echo "NIX_CONFIG=netrc-file = $RUNNER_TEMP/netrc" >> "$GITHUB_ENV"
+  - uses: cf-contrib/cf-nix-cache@v0.3.0 # x-release-please-version
+    with:
+      cache-url: https://<your-worker>.workers.dev
   - run: nix copy --to https://<your-worker>.workers.dev ./result
 ```
 
-> [!WARNING]
-> GitHub OIDC tokens expire 5 minutes after they're issued, and the lifetime can't be changed. Fetch the token right before `nix copy`. An upload that runs longer than about 6 minutes (5 minutes plus 60 seconds of clock tolerance) fails partway. gh-nix plans to refresh the token during long uploads.
+GitHub OIDC tokens expire 5 minutes after they're issued, and the lifetime can't be changed. The action rewrites the netrc with a fresh token every 4 minutes for the rest of the job, and Nix reads the netrc again for every request, so long uploads keep working.
 
 ## HTTP API
 

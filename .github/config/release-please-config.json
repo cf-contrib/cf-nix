@@ -10,6 +10,7 @@
       "bump-minor-pre-major": true,
       "extra-files": [
         "README.md",
+        "packages/cf-nix-action/README.md",
         "packages/cf-nix-worker/terraform/README.md",
         "packages/cf-nix-worker/terraform/variables.tf",
         {

@@ -21,6 +21,9 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@v23
       - name: Run Tests
         run: nix develop --command cargo test
+      - name: Test Action
+        working-directory: packages/cf-nix-action
+        run: nix develop --command npm test
       - name: Validate Terraform Module
         working-directory: packages/cf-nix-worker/terraform
         run: |
@@ -28,8 +31,52 @@ jobs:
           nix develop --command tofu init -backend=false
           nix develop --command tofu validate
           nix develop --command tofu test
+
+  # Runs the action from a fresh checkout with nothing installed, against a stub
+  # that stands in for the runner's OIDC endpoint and the cache's /auth/whoami.
+  # Catches broken action.yml paths, and checks that the token refresher keeps
+  # running into later steps.
+  smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Start Stub
+        run: |
+          node packages/cf-nix-action/test/stub.js > "$RUNNER_TEMP/stub.log" 2>&1 &
+          for _ in $(seq 20); do grep -q listening "$RUNNER_TEMP/stub.log" && exit 0; sleep 0.5; done
+          cat "$RUNNER_TEMP/stub.log"; exit 1
+      - name: Run cf-nix-cache
+        id: auth
+        uses: ./
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: http://127.0.0.1:8787/oidc?api-version=2.0
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: stub-request-token
+          CF_NIX_ACTION_REFRESH_INTERVAL: "2"
+        with:
+          cache-url: http://127.0.0.1:8787
+      - name: Check Outputs And Netrc
+        env:
+          SUBJECT: ${{ steps.auth.outputs.subject }}
+          NETRC: ${{ steps.auth.outputs.netrc-file }}
+        run: |
+          test "$SUBJECT" = repo:example-org/app:ref:refs/heads/main
+          test "$NIX_CONFIG" = "netrc-file = $NETRC"
+          test "$(stat -c %a "$NETRC")" = 600
+          grep -q '^  login oidc$' "$NETRC"
+      - name: Check The Refresher Outlives Its Step
+        env:
+          NETRC: ${{ steps.auth.outputs.netrc-file }}
+        run: |
+          first=$(cat "$NETRC")
+          sleep 5
+          test "$(cat "$NETRC")" != "$first"
+
   release:
-    needs: test
+    needs: [test, smoke]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:

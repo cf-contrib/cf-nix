@@ -31,6 +31,7 @@
         devShells.default = pkgs.mkShell {
           name = "cf-nix-cache";
           packages = [
+            pkgs.nodejs_24
             pkgs.opentofu
             pkgs.pkg-config
             pkgs.wrangler
