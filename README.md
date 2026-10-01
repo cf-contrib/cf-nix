@@ -209,24 +209,26 @@ Use Terraform with the Cloudflare provider. The [`examples/terraform/`](examples
 
 CI publishes two files to GitHub Releases:
 
-- `build/index.js`
-- `build/index_bg.wasm`
+- `index.js`
+- `index_bg.wasm`
 
 Both are required, because `index.js` imports `./index_bg.wasm` at runtime.
 
-> `wrangler.toml` is for local testing, not production.
+> `packages/cf-nix-cache-worker/wrangler.toml` is for local testing, not production.
 
 ## Development
 
-The Nix flake gives you a dev shell with the tooling already pinned:
+The Worker crate lives in [`packages/cf-nix-cache-worker`](packages/cf-nix-cache-worker), in a Cargo workspace. The Nix flake gives you a dev shell with the tooling already pinned:
 
 ```bash
-nix develop -c cargo test           # run the test suite
+nix develop -c cargo test           # run the unit tests (from the repo root)
+
+cd packages/cf-nix-cache-worker
 nix develop -c worker-build --dev   # build the Worker bundle into ./build
 nix develop -c wrangler dev         # serve locally via wrangler
 ```
 
-The integration tests run against `wrangler dev`. Uploads need a GitHub token with push access to the `CF_NIX_CACHE_GITHUB_REPOSITORY` in `wrangler.toml`:
+The integration tests run against `wrangler dev`, from `packages/cf-nix-cache-worker`. Uploads need a GitHub token with push access to the `CF_NIX_CACHE_GITHUB_REPOSITORY` in `wrangler.toml`:
 
 ```bash
 CF_NIX_CACHE_GITHUB_TOKEN=$(gh auth token) nix develop -c cargo test --features integration
