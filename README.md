@@ -28,11 +28,10 @@ steps:
 
 | Component | Ships as | What it is |
 |---|---|---|
-| [Worker](packages/cf-nix-worker) | `index.js` + `index_bg.wasm` in [Releases](https://github.com/cf-contrib/cf-nix-cache/releases) | The cache, written in Rust. Serves narinfo and NARs from R2, validates and signs uploads, and authorizes uploaders by their GitHub identity. |
-| [Terraform module](packages/cf-nix-worker/terraform) | `source = "git::…//packages/cf-nix-worker/terraform?ref=<version>"` | Deploys the released Worker with its R2 bucket and bindings. The signing key comes from Secrets Store. |
 | [Action](packages/cf-nix-action) | `uses: cf-contrib/cf-nix-cache@<version>` | Sets up a job's OIDC credentials for `nix copy`, and keeps them fresh during long uploads. No runtime dependencies. |
+| [Worker](packages/cf-nix-worker) | `index.js` + `index_bg.wasm` in [Releases](https://github.com/cf-contrib/cf-nix-cache/releases) | The cache, written in Rust. Serves narinfo and NARs from R2, validates and signs uploads, and authorizes uploaders by their GitHub identity. |
 
-The Worker, the module and the action are released together from one tag.
+The Worker, with its Terraform module, and the action are released together from one tag.
 
 ## How it works
 
@@ -77,7 +76,7 @@ Also: this is a hobby project. I wanted an excuse to spend more time with Cloudf
 ## Quick start
 
 1. **Create the signing key.** Generate it with `nix key generate-secret --key-name cache.example.com-1` and store it in Secrets Store. Clients need its public key (`nix key convert-secret-to-public`).
-2. **Deploy the Worker** with the [Terraform module](packages/cf-nix-worker/terraform), on workers.dev (a custom domain is optional), then check that `<cache-url>/nix-cache-info` responds.
+2. **Deploy the Worker** with the [Terraform module](packages/cf-nix-worker/terraform), on workers.dev (a custom domain is optional), then check that `<cache-url>/healthz` returns `200`.
 3. **Point Nix at it** in `nix.conf`:
    ```ini
    substituters = https://cf-nix-cache.example.workers.dev https://cache.nixos.org

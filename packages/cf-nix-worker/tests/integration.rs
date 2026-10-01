@@ -107,7 +107,7 @@ async fn test_get_nar_not_found() {
 
 #[tokio::test]
 async fn test_whoami_with_github_token() {
-    let resp = helper::get_with_auth("auth/whoami", "github", &helper::github_token())
+    let resp = helper::get_with_auth("v1/auth/whoami", "github", &helper::github_token())
         .await
         .expect("the request failed");
     assert_eq!(resp.status(), 200);
@@ -123,7 +123,7 @@ async fn test_whoami_with_github_token() {
 
 #[tokio::test]
 async fn test_whoami_without_credentials() {
-    let resp = helper::get("auth/whoami")
+    let resp = helper::get("v1/auth/whoami")
         .await
         .expect("the request failed");
     assert_eq!(resp.status(), 401);
@@ -132,7 +132,7 @@ async fn test_whoami_without_credentials() {
 #[tokio::test]
 async fn test_whoami_with_oidc_disabled() {
     // The dev config only sets CF_NIX_WORKER_GITHUB_REPOSITORY, so OIDC auth is off.
-    let resp = helper::get_with_auth("auth/whoami", "oidc", "a.b.c")
+    let resp = helper::get_with_auth("v1/auth/whoami", "oidc", "a.b.c")
         .await
         .expect("the request failed");
     assert_eq!(resp.status(), 401);
@@ -159,4 +159,11 @@ async fn test_put_rejects_bad_credentials() {
         .expect("the request failed");
         assert_eq!(resp.status(), 401, "{credentials:?}");
     }
+}
+
+#[tokio::test]
+async fn test_healthz() {
+    let resp = helper::get("healthz").await.expect("the request failed");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.expect("the body failed"), "ok");
 }

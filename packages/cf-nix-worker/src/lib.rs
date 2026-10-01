@@ -19,7 +19,8 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     Router::new()
         .get("/nix-cache-info", get_nix_cache_info)
-        .get_async("/auth/whoami", get_whoami)
+        .get_async("/healthz", get_healthz)
+        .get_async("/v1/auth/whoami", get_whoami)
         .post_async("/", post_mass_query)
         .head_async("/:hash", head_narinfo)
         .get_async("/:hash", get_narinfo)
@@ -31,7 +32,7 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .await
 }
 
-/// GET /auth/whoami
+/// GET /v1/auth/whoami
 ///
 /// Resolves the request's credentials the same way as an upload and returns
 /// the identity, so clients can check their setup before a `nix copy`.
@@ -39,6 +40,31 @@ async fn get_whoami(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     match auth::authorize(&req, &ctx.env).await {
         Ok(identity) => Response::from_json(&identity),
         Err(err) => err.into_response(),
+    }
+}
+
+/// GET /healthz
+///
+/// `200` when the bucket binding, the auth config and the signing key (if
+/// bound) are valid, else `500`. Never shows the config: the reason is logged.
+async fn get_healthz(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    match check_health(&ctx.env).await {
+        Ok(()) => Response::ok("ok"),
+        Err(reason) => {
+            console_error!("unhealthy: {reason}");
+            Response::error("unhealthy", 500)
+        }
+    }
+}
+
+async fn check_health(env: &Env) -> std::result::Result<(), String> {
+    env.bucket("CF_NIX_WORKER_BUCKET")
+        .map_err(|_| "CF_NIX_WORKER_BUCKET is not bound".to_string())?;
+    auth::check_config(env)?;
+    match signing_secret(env).await {
+        Ok(Some(secret)) => NarInfoSigKey::parse(&secret).map(|_| ()),
+        Ok(None) => Ok(()),
+        Err(err) => Err(format!("reading CF_NIX_WORKER_SECRET failed: {err}")),
     }
 }
 

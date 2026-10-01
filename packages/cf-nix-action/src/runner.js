@@ -147,7 +147,7 @@ const HINTS = /** @type {Record<number, string>} */ ({
  * @param {URL} cache @param {string} token
  */
 export async function whoami(cache, token) {
-  const response = await fetch(new URL("/auth/whoami", cache), {
+  const response = await fetch(new URL("/v1/auth/whoami", cache), {
     headers: { authorization: `Basic ${Buffer.from(`oidc:${token}`).toString("base64")}` },
     signal: AbortSignal.timeout(30_000),
   });
@@ -158,6 +158,6 @@ export async function whoami(cache, token) {
     throw new Error(`cache returned ${response.status}${reason ? ` (${reason})` : ""}${hint ? `: ${hint}` : ""}`);
   }
   const identity = /** @type {{ kind?: string, subject?: string }} */ (await response.json());
-  if (typeof identity.subject !== "string") throw new Error("cache returned an invalid /auth/whoami response");
+  if (typeof identity.subject !== "string") throw new Error("cache returned an invalid /v1/auth/whoami response");
   return identity.subject;
 }
