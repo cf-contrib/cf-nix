@@ -134,13 +134,17 @@ impl Validate for NarInfo<'_> {
             return Err("NarSize must be a positive integer".to_string());
         }
 
-        // References: allow empty, but if present each entry must look like a store path.
+        // References are store path *basenames* (`<hash>-<name>`, relative to
+        // /nix/store), like Deriver. Empty means no references.
         for reference in self.references.iter() {
             if reference.is_empty() {
                 continue;
             }
-            if !reference.starts_with("/nix/store/") {
-                return Err("References must be space-separated store paths".to_string());
+            if !is_store_path_basename(reference) {
+                return Err(
+                    "References must be space-separated store path basenames (<hash>-<name>)"
+                        .to_string(),
+                );
             }
         }
 
@@ -176,14 +180,32 @@ impl Validate for NarInfo<'_> {
     }
 }
 
+/// Whether `name` is a store path basename: a 32-character Nix-base32 hash, a
+/// dash, and a name of the characters Nix allows in store path names.
+fn is_store_path_basename(name: &str) -> bool {
+    let Some((hash, rest)) = name.split_once('-') else {
+        return false;
+    };
+    hash.len() == 32
+        && hash.bytes().all(|c| NIX32_ALPHABET.contains(&c))
+        && !rest.is_empty()
+        && rest
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"+-._?=".contains(&c))
+}
+
+const NIX32_ALPHABET: &[u8; 32] = b"0123456789abcdfghijklmnpqrsvwxyz";
+
 fn narinfo_fingerprint(info: &NarInfo<'_>) -> Result<String, String> {
     // NarHash must be sha256:<nix32> to match Nix's fingerprinting.
     let nar_hash_nix32 = nar_hash_to_nix32(&info.nar_hash)?;
 
+    // narinfo lists references as basenames, but Nix signs their full paths.
     let refs = info
         .references
         .iter()
-        .map(|r| r.as_ref())
+        .filter(|r| !r.is_empty())
+        .map(|r| format!("/nix/store/{r}"))
         .collect::<Vec<_>>()
         .join(",");
 
@@ -303,6 +325,25 @@ fn validate_sha256_hash_field(field: &str, value: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    const TEST_KEY: &str = "cache.example.org-1:wpzRsj2Xn0OiTVS0kP0L0ecJ9tuFNH6qKlGmOb8+a51litiFcHAAMHXGekNc4Br0X6r2mF4k/eqDITsD7hSJXA==";
+
+    /// Written and signed by Nix itself (`nix copy --to
+    /// 'file://…?compression=none&secret-key=…'` with TEST_KEY), so the
+    /// signature is the ground truth for a path with references.
+    const NIX_SIGNED: &str = "\
+StorePath: /nix/store/mgc3m5ad39b84vkdrca6zd9jan5a28c2-hello-2.12.3
+URL: nar/0139403halzgnamd4wcc0j80yd06sf1wb0gjn4xswh855nvrwgd6.nar
+Compression: none
+FileHash: sha256:0139403halzgnamd4wcc0j80yd06sf1wb0gjn4xswh855nvrwgd6
+FileSize: 113096
+NarHash: sha256:0139403halzgnamd4wcc0j80yd06sf1wb0gjn4xswh855nvrwgd6
+NarSize: 113096
+References: ls125wfdax9gk2ryq7fgzrncpi6x5v2s-libiconv-115.100.1
+Deriver: lhbc5cbhqmaq5mq5171lxhkr1qf0mkbr-hello-2.12.3.drv
+";
+    const NIX_SIG: &str =
+        "Asy0nOGVV5q3qTjAICHgn7g7Xdm8fxYPv90mmG1LhBdmgFwr8PH9nSoYNNHgCthL34dgBdnLAorV/4cJzJoiCg==";
+
     fn narinfo() -> NarInfo<'static> {
         NarInfo::builder()
             .store_path("/nix/store/abc-min".into())
@@ -412,7 +453,7 @@ mod tests {
     #[test]
     fn signing_key_parses_name_and_secret() {
         let key = NarInfoSigKey::parse(
-            "cache.example.org-1:wpzRsj2Xn0OiTVS0kP0L0ecJ9tuFNH6qKlGmOb8+a51litiFcHAAMHXGekNc4Br0X6r2mF4k/eqDITsD7hSJXA==",
+            TEST_KEY,
         )
         .expect("key should parse");
 
@@ -427,7 +468,7 @@ mod tests {
     fn sign_produces_sig_field() {
         let info = narinfo();
         let key = NarInfoSigKey::parse(
-            "cache.example.org-1:wpzRsj2Xn0OiTVS0kP0L0ecJ9tuFNH6qKlGmOb8+a51litiFcHAAMHXGekNc4Br0X6r2mF4k/eqDITsD7hSJXA==",
+            TEST_KEY,
         )
         .expect("key should parse");
 
@@ -439,5 +480,42 @@ mod tests {
             .decode(sig.sig.as_ref())
             .expect("signature should be base64");
         assert_eq!(decoded.len(), 64);
+    }
+
+    #[test]
+    fn narinfo_validate_accepts_nix_written_narinfo() {
+        let info = NarInfo::parse(NIX_SIGNED).expect("NarInfo should parse");
+        let ctx = NarInfoContext {
+            hash: "mgc3m5ad39b84vkdrca6zd9jan5a28c2".to_string(),
+        };
+        assert_eq!(info.validate(&ctx), Ok(()));
+    }
+
+    #[test]
+    fn narinfo_validate_rejects_bad_references() {
+        for reference in [
+            "/nix/store/ls125wfdax9gk2ryq7fgzrncpi6x5v2s-libiconv-115.100.1",
+            "ls125wfdax9gk2ryq7fgzrncpi6x5v2s",
+            "ls125wfdax9gk2ryq7fgzrncpi6x5v2-short-hash",
+            "ls125wfdax9gk2ryq7fgzrncpi6x5v2e-not-nix32",
+            "ls125wfdax9gk2ryq7fgzrncpi6x5v2s-bad/name",
+        ] {
+            let mut info = narinfo();
+            info.references = vec![reference.into()];
+            let ctx = NarInfoContext {
+                hash: "abc".to_string(),
+            };
+            let err = info.validate(&ctx).unwrap_err();
+            assert!(err.contains("References"), "{reference}: {err}");
+        }
+    }
+
+    #[test]
+    fn sign_matches_nix_for_a_path_with_references() {
+        let info = NarInfo::parse(NIX_SIGNED).expect("NarInfo should parse");
+        let key = NarInfoSigKey::parse(TEST_KEY).expect("key should parse");
+        let sig = key.sign(&info).expect("should sign");
+        assert_eq!(sig.key_name, "cache.example.org-1");
+        assert_eq!(sig.sig, NIX_SIG);
     }
 }
