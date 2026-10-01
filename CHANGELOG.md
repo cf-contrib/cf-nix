@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.0](https://github.com/cf-contrib/cf-nix-cache/compare/v0.2.0...v0.3.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* the bindings are renamed: NIX_BUCKET to CF_NIX_WORKER_BUCKET and NIX_SECRET to CF_NIX_WORKER_SECRET. The Terraform module replaces examples/terraform and sets them for you; see its README for migrating with moved blocks.
+* the shared NIX_TOKEN / x-auth-token upload auth is removed. Uploads authenticate with a GitHub user token (push access to CF_NIX_WORKER_GITHUB_REPOSITORY) or a GitHub Actions OIDC token (CF_NIX_WORKER_GITHUB_OWNER_ID, CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE, CF_NIX_WORKER_GITHUB_OIDC_RULES). Configure at least one before upgrading.
+
+### Features
+
+* add a GitHub Action for OIDC uploads ([#79](https://github.com/cf-contrib/cf-nix-cache/issues/79)) ([1b4919f](https://github.com/cf-contrib/cf-nix-cache/commit/1b4919f4ae35b6d8973e8f3736b757e11b19fd54)), closes [#72](https://github.com/cf-contrib/cf-nix-cache/issues/72)
+* authorize uploads by GitHub identity ([8fd92de](https://github.com/cf-contrib/cf-nix-cache/commit/8fd92de804a7fba5fa5f74795a7bc86b1b38d0e3)), closes [#67](https://github.com/cf-contrib/cf-nix-cache/issues/67)
+* prefix Worker bindings with CF_NIX_WORKER_ ([bc02f83](https://github.com/cf-contrib/cf-nix-cache/commit/bc02f833ee93309e0aa57d32fd812f24572ec02e)), closes [#72](https://github.com/cf-contrib/cf-nix-cache/issues/72)
+* **terraform:** ship a Terraform / OpenTofu module ([#74](https://github.com/cf-contrib/cf-nix-cache/issues/74)) ([ec9b1ac](https://github.com/cf-contrib/cf-nix-cache/commit/ec9b1ac09a32f678206bdbdb1fa5171a6ed0bd79)), closes [#72](https://github.com/cf-contrib/cf-nix-cache/issues/72)
+
+
+### Bug Fixes
+
+* accept and sign narinfo references the way Nix writes them ([#81](https://github.com/cf-contrib/cf-nix-cache/issues/81)) ([98f2f1f](https://github.com/cf-contrib/cf-nix-cache/commit/98f2f1f69103b2fc87db9dbe358b73fbf49c36fb))
+
 ## [0.2.0](https://github.com/cf-contrib/nix-cache/compare/v0.1.0...v0.2.0) (2026-05-19)
 
 
