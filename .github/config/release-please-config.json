@@ -17,7 +17,7 @@
         {
           "type": "toml",
           "path": "Cargo.lock",
-          "jsonpath": "$.package[?(@.name==='cf-nix-worker')].version"
+          "jsonpath": "$.package[?(@.name.value==='cf-nix-worker')].version"
         }
       ]
     }
