@@ -30,23 +30,44 @@ resource "cloudflare_worker_version" "nix_cache" {
     },
   ]
 
-  bindings = [
-    {
-      name        = "NIX_BUCKET"
-      type        = "r2_bucket"
-      bucket_name = cloudflare_r2_bucket.nix.name
-    },
-    {
-      name = "NIX_TOKEN"
-      type = "secret_text"
-      text = var.nix_token
-    },
-    {
-      name = "NIX_SECRET"
-      type = "secret_text"
-      text = var.nix_secret
-    },
-  ]
+  bindings = concat(
+    [
+      {
+        name        = "NIX_BUCKET"
+        type        = "r2_bucket"
+        bucket_name = cloudflare_r2_bucket.nix.name
+      },
+      {
+        name = "NIX_SECRET"
+        type = "secret_text"
+        text = var.nix_secret
+      },
+    ],
+    # Upload auth: a mechanism is on only when its bindings exist.
+    var.nix_token == null ? [] : [
+      {
+        name = "NIX_TOKEN"
+        type = "secret_text"
+        text = var.nix_token
+      },
+    ],
+    [
+      for name, text in local.auth_vars : {
+        name = name
+        type = "plain_text"
+        text = text
+      } if text != null
+    ],
+  )
+}
+
+locals {
+  auth_vars = {
+    GITHUB_REPOSITORY    = var.github_repository
+    GITHUB_OWNER_ID      = length(var.github_oidc_rules) == 0 ? null : var.github_owner_id
+    GITHUB_OIDC_AUDIENCE = length(var.github_oidc_rules) == 0 ? null : var.github_oidc_audience
+    GITHUB_OIDC_RULES    = length(var.github_oidc_rules) == 0 ? null : jsonencode(var.github_oidc_rules)
+  }
 }
 
 # Promote the new version to 100% of traffic.
