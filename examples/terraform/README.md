@@ -19,7 +19,7 @@ provider — no `wrangler` or local build step required.
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars: set account_id, r2_bucket_name, nix_token
+# edit terraform.tfvars: set account_id, r2_bucket_name, nix_secret and upload auth
 
 export CLOUDFLARE_API_TOKEN=...
 
@@ -45,12 +45,11 @@ substituters = https://cf-nix-cache.<your-subdomain>.workers.dev https://cache.n
 trusted-public-keys = <key-name>:<base64-public-key> cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 ```
 
-Push a store path:
+Set up upload credentials as described in the root README's
+[Authentication](../../README.md#authentication) section, then push a store path:
 
 ```bash
-nix copy \
-  --to "https://x-auth-token:${NIX_TOKEN}@cf-nix-cache.<your-subdomain>.workers.dev" \
-  /nix/store/<hash>-<name>
+nix copy --to https://cf-nix-cache.<your-subdomain>.workers.dev /nix/store/<hash>-<name>
 ```
 
 ## Inputs
@@ -59,7 +58,10 @@ nix copy \
 | ----------------------- | -------- | -------------- | -------------------------------------------------------------------------- |
 | `account_id`            | yes      | —              | Cloudflare account ID.                                                     |
 | `r2_bucket_name`        | yes      | —              | R2 bucket name to create (or import) for cache storage.                    |
-| `nix_token`             | yes      | —              | Password for HTTP Basic auth on PUT uploads.                               |
+| `github_repository`     | no       | `null`         | `owner/repo`; GitHub users with push access to it can upload.              |
+| `github_owner_id`       | with rules | `null`       | Numeric GitHub org/user ID whose repos may upload via Actions OIDC.        |
+| `github_oidc_audience`  | with rules | `null`       | Expected `aud` of Actions OIDC tokens, e.g. the cache URL.                 |
+| `github_oidc_rules`     | no       | `[]`           | OIDC claim rules (list of maps); any one must match. Empty turns OIDC off. |
 | `nix_secret`            | yes      | —              | `<key-name>:<base64>` Ed25519 signing secret. Required because the Worker rejects unsigned narinfo. |
 | `worker_name`           | no       | `cf-nix-cache` | Cloudflare Worker script name.                                             |
 | `worker_compatibility_date` | no   | `2026-05-14`   | Workers runtime compatibility date.                                        |

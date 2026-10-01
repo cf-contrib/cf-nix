@@ -1,20 +1,25 @@
 use std::{borrow::Cow, fmt::Write};
 
+mod auth;
 mod model;
 
-use http_auth_basic::Credentials;
 use model::{NarInfoContext, NarInfoSigKey, Validate};
 use narinfo::*;
 use worker::*;
 
 #[event(fetch)]
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
-    if !authorize(&req, &env) {
-        return Response::error("access denied", 401);
+    // Reads are public; every upload must resolve to an identity.
+    if req.method() == Method::Put {
+        match auth::authorize(&req, &env).await {
+            Ok(identity) => console_log!("PUT {} by {identity}", req.path()),
+            Err(err) => return err.into_response(),
+        }
     }
 
     Router::new()
         .get("/nix-cache-info", get_nix_cache_info)
+        .get_async("/auth/whoami", get_whoami)
         .post_async("/", post_mass_query)
         .head_async("/:hash", head_narinfo)
         .get_async("/:hash", get_narinfo)
@@ -26,36 +31,15 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .await
 }
 
-/// Validates HTTP Basic credentials for PUT requests.
+/// GET /auth/whoami
 ///
-/// This worker uses Basic Auth with the username set to `"x-auth-token"` and
-/// the password set to the configured `NIX_TOKEN` value.
-///
-/// Returns `true` when the request contains a valid `Authorization` header and
-/// the credentials match; otherwise returns `false`.
-fn authorize(req: &Request, env: &Env) -> bool {
-    if req.method() != Method::Put {
-        return true;
+/// Resolves the request's credentials the same way as an upload and returns
+/// the identity, so clients can check their setup before a `nix copy`.
+async fn get_whoami(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    match auth::authorize(&req, &ctx.env).await {
+        Ok(identity) => Response::from_json(&identity),
+        Err(err) => err.into_response(),
     }
-
-    let Some(header) = req.headers().get("Authorization").unwrap_or_default() else {
-        return false;
-    };
-
-    let input = match Credentials::from_header(header) {
-        Ok(input) => input,
-        Err(_) => return false,
-    };
-
-    let expected = Credentials {
-        user_id: "x-auth-token".to_string(),
-        password: match env.var("NIX_TOKEN") {
-            Ok(secret) => secret.to_string(),
-            Err(_) => return false,
-        },
-    };
-
-    input.eq(&expected)
 }
 
 /// GET /nix-cache-info
