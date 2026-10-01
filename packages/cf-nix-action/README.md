@@ -14,7 +14,7 @@ steps:
   - uses: DeterminateSystems/nix-installer-action@v23
   - run: nix build .#app
 
-  - uses: cf-contrib/cf-nix-cache@v0.3.0 # x-release-please-version
+  - uses: cf-contrib/cf-nix-cache@v0.4.0 # x-release-please-version
     with:
       cache-url: https://cf-nix-cache.example.workers.dev
   - run: nix copy --to 'https://cf-nix-cache.example.workers.dev?compression=none' ./result

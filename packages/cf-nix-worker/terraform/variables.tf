@@ -86,7 +86,7 @@ variable "github_oidc_rules" {
 variable "release_tag" {
   type        = string
   description = "cf-nix-cache release to deploy, e.g. v1.2.3, or \"latest\". Defaults to the release this module comes from."
-  default     = "v0.3.0" # x-release-please-version
+  default     = "v0.4.0" # x-release-please-version
 }
 
 variable "bundle_dir" {
