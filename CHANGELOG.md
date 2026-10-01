@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/cf-contrib/cf-nix-cache/compare/v0.2.0...v0.3.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* the Worker reads only the CF_NIX_CACHE_* bindings. Rename the bindings in your deployment before upgrading; the Terraform example already uses the new names.
+* the NIX_TOKEN / x-auth-token upload auth is removed. Configure GITHUB_REPOSITORY and/or GITHUB_OWNER_ID, GITHUB_OIDC_AUDIENCE and GITHUB_OIDC_RULES before upgrading. The Terraform example drops the nix_token variable.
+
+### Features
+
+* authorize uploads by GitHub identity ([#68](https://github.com/cf-contrib/cf-nix-cache/issues/68)) ([8fd92de](https://github.com/cf-contrib/cf-nix-cache/commit/8fd92de804a7fba5fa5f74795a7bc86b1b38d0e3)), closes [#67](https://github.com/cf-contrib/cf-nix-cache/issues/67)
+* prefix Worker bindings with CF_NIX_CACHE_ ([#70](https://github.com/cf-contrib/cf-nix-cache/issues/70)) ([3dceb8c](https://github.com/cf-contrib/cf-nix-cache/commit/3dceb8cbd934ddf618945f1da8a9c314ed9e492d))
+
 ## [0.2.0](https://github.com/cf-contrib/nix-cache/compare/v0.1.0...v0.2.0) (2026-05-19)
 
 
