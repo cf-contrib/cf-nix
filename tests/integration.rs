@@ -104,3 +104,58 @@ async fn test_get_nar_not_found() {
         .expect("the request failed");
     assert_eq!(get_resp.status(), 404);
 }
+
+#[tokio::test]
+async fn test_whoami_with_token() {
+    let resp = helper::get_with_auth("auth/whoami", "x-auth-token", "nix-token-dev")
+        .await
+        .expect("the request failed");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value =
+        serde_json::from_str(&resp.text().await.expect("the body failed")).unwrap();
+    assert_eq!(
+        body,
+        serde_json::json!({ "kind": "token", "subject": "x-auth-token" })
+    );
+}
+
+#[tokio::test]
+async fn test_whoami_without_credentials() {
+    let resp = helper::get("auth/whoami")
+        .await
+        .expect("the request failed");
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn test_whoami_with_unconfigured_mechanisms() {
+    // The dev config only sets NIX_TOKEN, so GitHub and OIDC auth are off.
+    for (username, password) in [("github", "gho_example"), ("oidc", "a.b.c")] {
+        let resp = helper::get_with_auth("auth/whoami", username, password)
+            .await
+            .expect("the request failed");
+        assert_eq!(resp.status(), 401, "{username}");
+    }
+}
+
+#[tokio::test]
+async fn test_put_rejects_bad_credentials() {
+    let file_name = "j5m1qd2dbsmhq0mw13yb8wijnm3pq4z0.narinfo";
+    let file_data = std::fs::read_to_string(format!("tests/fixture/{file_name}")).unwrap();
+
+    for credentials in [
+        None,
+        Some(("x-auth-token", "wrong-token")),
+        Some(("someone", "nix-token-dev")),
+    ] {
+        let resp = helper::put_with_auth(
+            file_name,
+            "text/x-nix-narinfo",
+            file_data.clone(),
+            credentials,
+        )
+        .await
+        .expect("the request failed");
+        assert_eq!(resp.status(), 401, "{credentials:?}");
+    }
+}

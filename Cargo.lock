@@ -930,8 +930,11 @@ dependencies = [
  "http-auth-basic",
  "narinfo",
  "reqwest",
+ "serde",
+ "serde_json",
  "sha2",
  "tokio",
+ "web-sys",
  "worker",
  "worker-macros",
 ]

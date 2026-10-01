@@ -60,3 +60,39 @@ pub async fn put<B: Into<Body>>(
         .send()
         .await
 }
+
+/// Sends an HTTP GET request with HTTP Basic credentials.
+pub async fn get_with_auth(
+    path: &str,
+    username: &str,
+    password: &str,
+) -> reqwest::Result<reqwest::Response> {
+    let url = BASE_URL.join(path).unwrap();
+    println!("{url:?}");
+    reqwest::Client::builder()
+        .build()?
+        .get(url.to_string())
+        .basic_auth(username, Some(password))
+        .send()
+        .await
+}
+
+/// Sends an HTTP PUT request with the given HTTP Basic credentials, or none.
+pub async fn put_with_auth<B: Into<Body>>(
+    path: &str,
+    content_type: &str,
+    content_body: B,
+    credentials: Option<(&str, &str)>,
+) -> reqwest::Result<reqwest::Response> {
+    let url = BASE_URL.join(path).unwrap();
+    println!("{url:?}");
+    let mut req = reqwest::Client::builder()
+        .build()?
+        .put(url.to_string())
+        .body(content_body)
+        .header("content-type", content_type);
+    if let Some((username, password)) = credentials {
+        req = req.basic_auth(username, Some(password));
+    }
+    req.send().await
+}
