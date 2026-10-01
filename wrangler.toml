@@ -6,9 +6,9 @@ compatibility_date = "2026-05-14"
 command = "worker-build --dev"
 
 [[r2_buckets]]
-binding = "NIX_BUCKET"
+binding = "CF_NIX_CACHE_BUCKET"
 bucket_name = "nix-bucket-dev"
 
 [vars]
 # Uploads in local dev need a GitHub token with push access to this repo.
-GITHUB_REPOSITORY = "cf-contrib/cf-nix-cache"
+CF_NIX_CACHE_GITHUB_REPOSITORY = "cf-contrib/cf-nix-cache"

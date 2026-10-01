@@ -32,38 +32,44 @@ thread_local! {
 /// GitHub Actions OIDC auth. Same matching semantics as cf-oidc-auth.
 #[derive(Debug)]
 pub(super) struct Config {
-    /// Numeric org/user ID (`GITHUB_OWNER_ID`), matched against
+    /// Numeric org/user ID (`CF_NIX_CACHE_GITHUB_OWNER_ID`), matched against
     /// `repository_owner_id` for every rule.
     owner_id: String,
-    /// Expected `aud` claim (`GITHUB_OIDC_AUDIENCE`), without a trailing `/`.
+    /// Expected `aud` claim (`CF_NIX_CACHE_GITHUB_OIDC_AUDIENCE`), without a trailing `/`.
     audience: String,
-    /// `GITHUB_OIDC_RULES`; the first rule that matches wins.
+    /// `CF_NIX_CACHE_GITHUB_OIDC_RULES`; the first rule that matches wins.
     rules: Vec<Rule>,
 }
 
 impl Config {
     pub(super) fn parse(owner_id: &str, audience: &str, rules: &str) -> Result<Self, String> {
         if owner_id.is_empty() || !owner_id.bytes().all(|c| c.is_ascii_digit()) {
-            return Err("GITHUB_OWNER_ID must be a numeric GitHub org or user ID".to_string());
+            return Err(
+                "CF_NIX_CACHE_GITHUB_OWNER_ID must be a numeric GitHub org or user ID".to_string(),
+            );
         }
 
         // GitHub's default audience is `https://github.com/<owner>`. A JWT
         // requested for AWS or GCP carries it, so it must not work here.
         let audience = audience.trim_end_matches('/');
         if audience.is_empty() {
-            return Err("GITHUB_OIDC_AUDIENCE must not be empty".to_string());
+            return Err("CF_NIX_CACHE_GITHUB_OIDC_AUDIENCE must not be empty".to_string());
         }
         if audience == "https://github.com" || audience.starts_with("https://github.com/") {
             return Err(
-                "GITHUB_OIDC_AUDIENCE must be custom (e.g. the cache URL), not GitHub's default"
+                "CF_NIX_CACHE_GITHUB_OIDC_AUDIENCE must be custom (e.g. the cache URL), not GitHub's default"
                     .to_string(),
             );
         }
 
-        let raw: Vec<Map<String, Value>> = serde_json::from_slice(rules.as_bytes())
-            .map_err(|err| format!("GITHUB_OIDC_RULES must be a JSON array of objects: {err}"))?;
+        let raw: Vec<Map<String, Value>> =
+            serde_json::from_slice(rules.as_bytes()).map_err(|err| {
+                format!("CF_NIX_CACHE_GITHUB_OIDC_RULES must be a JSON array of objects: {err}")
+            })?;
         if raw.is_empty() {
-            return Err("GITHUB_OIDC_RULES must contain at least one rule".to_string());
+            return Err(
+                "CF_NIX_CACHE_GITHUB_OIDC_RULES must contain at least one rule".to_string(),
+            );
         }
         let rules = raw
             .into_iter()
@@ -79,7 +85,7 @@ impl Config {
     }
 }
 
-/// One `GITHUB_OIDC_RULES` entry: claim name to pattern. Matches when every
+/// One `CF_NIX_CACHE_GITHUB_OIDC_RULES` entry: claim name to pattern. Matches when every
 /// claim matches. `*` matches any run of characters (including `/`) except
 /// in `*_id` claims, which must match exactly.
 #[derive(Debug)]
@@ -89,7 +95,7 @@ impl Rule {
     fn parse(index: usize, raw: Map<String, Value>) -> Result<Self, String> {
         if raw.is_empty() {
             return Err(format!(
-                "GITHUB_OIDC_RULES[{index}] must match at least one claim"
+                "CF_NIX_CACHE_GITHUB_OIDC_RULES[{index}] must match at least one claim"
             ));
         }
 
@@ -97,7 +103,7 @@ impl Rule {
         for (claim, value) in raw {
             if claim == "repository_owner_id" {
                 return Err(format!(
-                    "GITHUB_OIDC_RULES[{index}]: repository_owner_id is set by GITHUB_OWNER_ID"
+                    "CF_NIX_CACHE_GITHUB_OIDC_RULES[{index}]: repository_owner_id is set by CF_NIX_CACHE_GITHUB_OWNER_ID"
                 ));
             }
             // IDs may be written as JSON numbers; GitHub sends them as strings.
@@ -106,13 +112,13 @@ impl Rule {
                 Value::Number(n) if n.is_u64() => n.to_string(),
                 _ => {
                     return Err(format!(
-                        "GITHUB_OIDC_RULES[{index}].{claim} must be a non-empty string"
+                        "CF_NIX_CACHE_GITHUB_OIDC_RULES[{index}].{claim} must be a non-empty string"
                     ));
                 }
             };
             if is_id_claim(&claim) && pattern.contains('*') {
                 return Err(format!(
-                    "GITHUB_OIDC_RULES[{index}].{claim}: ID claims can't be globbed"
+                    "CF_NIX_CACHE_GITHUB_OIDC_RULES[{index}].{claim}: ID claims can't be globbed"
                 ));
             }
             claims.insert(claim, pattern);
@@ -237,7 +243,9 @@ fn check_claims(
         None => false,
     };
     if !audience_ok {
-        return Err(invalid("aud doesn't match GITHUB_OIDC_AUDIENCE"));
+        return Err(invalid(
+            "aud doesn't match CF_NIX_CACHE_GITHUB_OIDC_AUDIENCE",
+        ));
     }
 
     let Some(exp) = claim("exp").and_then(Value::as_u64) else {
@@ -259,13 +267,13 @@ fn check_claims(
 
     if claim("repository_owner_id").and_then(Value::as_str) != Some(config.owner_id.as_str()) {
         return Err(AuthError::Forbidden(format!(
-            "{subject}: repository owner is not GITHUB_OWNER_ID"
+            "{subject}: repository owner is not CF_NIX_CACHE_GITHUB_OWNER_ID"
         )));
     }
 
     let Some(rule) = config.rules.iter().position(|rule| rule.matches(claims)) else {
         return Err(AuthError::Forbidden(format!(
-            "{subject}: no GITHUB_OIDC_RULES entry matched"
+            "{subject}: no CF_NIX_CACHE_GITHUB_OIDC_RULES entry matched"
         )));
     };
 
@@ -491,7 +499,7 @@ mod tests {
         for owner_id in ["", "example-org", "12a"] {
             let err = Config::parse(owner_id, "https://cache.example.com", r#"[{"ref":"x"}]"#)
                 .unwrap_err();
-            assert!(err.contains("GITHUB_OWNER_ID"));
+            assert!(err.contains("CF_NIX_CACHE_GITHUB_OWNER_ID"));
         }
     }
 
@@ -499,7 +507,7 @@ mod tests {
     fn config_rejects_github_default_audience() {
         for audience in ["", "https://github.com", "https://github.com/example-org"] {
             let err = Config::parse("100000001", audience, r#"[{"ref":"x"}]"#).unwrap_err();
-            assert!(err.contains("GITHUB_OIDC_AUDIENCE"));
+            assert!(err.contains("CF_NIX_CACHE_GITHUB_OIDC_AUDIENCE"));
         }
     }
 
@@ -522,7 +530,7 @@ mod tests {
             ("[{}]", "at least one claim"),
             (
                 r#"[{"repository_owner_id":"100000001"}]"#,
-                "set by GITHUB_OWNER_ID",
+                "set by CF_NIX_CACHE_GITHUB_OWNER_ID",
             ),
             (r#"[{"repository_id":"2000*"}]"#, "can't be globbed"),
             (r#"[{"ref":""}]"#, "non-empty string"),

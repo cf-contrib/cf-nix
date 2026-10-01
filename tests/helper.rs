@@ -38,11 +38,11 @@ pub async fn post<B: Into<Body>>(
         .await
 }
 
-/// GitHub token used for uploads, from `NIX_CACHE_GITHUB_TOKEN`. It needs
-/// push access to the `GITHUB_REPOSITORY` in `wrangler.toml`.
+/// GitHub token used for uploads, from `CF_NIX_CACHE_GITHUB_TOKEN`. It needs
+/// push access to the `CF_NIX_CACHE_GITHUB_REPOSITORY` in `wrangler.toml`.
 pub fn github_token() -> String {
-    std::env::var("NIX_CACHE_GITHUB_TOKEN")
-        .expect("set NIX_CACHE_GITHUB_TOKEN, e.g. NIX_CACHE_GITHUB_TOKEN=$(gh auth token)")
+    std::env::var("CF_NIX_CACHE_GITHUB_TOKEN")
+        .expect("set CF_NIX_CACHE_GITHUB_TOKEN, e.g. CF_NIX_CACHE_GITHUB_TOKEN=$(gh auth token)")
 }
 
 /// Sends an HTTP PUT request with the given content type and body.

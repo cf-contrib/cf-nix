@@ -66,7 +66,7 @@ fn get_nix_cache_info(_req: Request, _ctx: RouteContext<()>) -> Result<Response>
 async fn post_mass_query(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let body = req.text().await?;
     let mut data = String::new();
-    let bucket = ctx.env.bucket("NIX_BUCKET")?;
+    let bucket = ctx.env.bucket("CF_NIX_CACHE_BUCKET")?;
 
     for hash in body.lines() {
         let key = if hash.ends_with(".narinfo") {
@@ -93,7 +93,7 @@ async fn head_narinfo(_req: Request, ctx: RouteContext<()>) -> Result<Response> 
     } else {
         format!("{hash}.narinfo")
     };
-    let bucket = ctx.env.bucket("NIX_BUCKET")?;
+    let bucket = ctx.env.bucket("CF_NIX_CACHE_BUCKET")?;
     if bucket.head(key).await?.is_some() {
         Response::empty()
     } else {
@@ -118,7 +118,7 @@ async fn get_narinfo(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
         format!("{hash}.narinfo")
     };
 
-    let bucket = ctx.env.bucket("NIX_BUCKET")?;
+    let bucket = ctx.env.bucket("CF_NIX_CACHE_BUCKET")?;
     let Some(object) = bucket.get(key).execute().await? else {
         return Response::error("object not found", 404);
     };
@@ -180,11 +180,11 @@ async fn put_narinfo(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     }
 
     // Stored narinfo must always carry a Sig:. If the uploader didn't provide
-    // one, sign with NIX_SECRET; if neither path produces a signature, reject.
+    // one, sign with CF_NIX_CACHE_SECRET; if neither path produces a signature, reject.
     if info.sigs.is_empty() {
-        let Ok(secret) = ctx.env.var("NIX_SECRET") else {
+        let Ok(secret) = ctx.env.var("CF_NIX_CACHE_SECRET") else {
             return Response::error(
-                "narinfo must be signed: no Sig: provided and NIX_SECRET is not configured",
+                "narinfo must be signed: no Sig: provided and CF_NIX_CACHE_SECRET is not configured",
                 400,
             );
         };
@@ -200,7 +200,7 @@ async fn put_narinfo(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     let mut data = String::new();
     info.serialize_into(&mut data).unwrap();
 
-    let bucket = ctx.env.bucket("NIX_BUCKET")?;
+    let bucket = ctx.env.bucket("CF_NIX_CACHE_BUCKET")?;
     bucket.put(key, data).execute().await?;
 
     Response::empty()
@@ -216,7 +216,7 @@ async fn head_nar(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     } else {
         format!("{hash}.nar")
     };
-    let bucket = ctx.env.bucket("NIX_BUCKET")?;
+    let bucket = ctx.env.bucket("CF_NIX_CACHE_BUCKET")?;
     if bucket.head(key).await?.is_some() {
         Response::empty()
     } else {
@@ -241,7 +241,7 @@ async fn get_nar(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
         format!("{hash}.nar")
     };
 
-    let bucket = ctx.env.bucket("NIX_BUCKET")?;
+    let bucket = ctx.env.bucket("CF_NIX_CACHE_BUCKET")?;
     let Some(object) = bucket.get(key).execute().await? else {
         return Response::error("object not found", 404);
     };
@@ -278,7 +278,7 @@ async fn put_nar(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         Some(stream) => stream,
         None => return Response::error("missing body", 400),
     };
-    let bucket = ctx.env.bucket("NIX_BUCKET")?;
+    let bucket = ctx.env.bucket("CF_NIX_CACHE_BUCKET")?;
     bucket.put(key, body).execute().await?;
 
     Response::empty()

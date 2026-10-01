@@ -18,7 +18,7 @@ thread_local! {
 /// GitHub user token auth: anyone with push access to `repository` can upload.
 #[derive(Debug)]
 pub(super) struct Config {
-    /// `owner/repo` (`GITHUB_REPOSITORY`).
+    /// `owner/repo` (`CF_NIX_CACHE_GITHUB_REPOSITORY`).
     repository: String,
 }
 
@@ -34,7 +34,7 @@ impl Config {
             Some((owner, repo)) if valid_part(owner) && valid_part(repo) => Ok(Self {
                 repository: repository.to_string(),
             }),
-            _ => Err("GITHUB_REPOSITORY must be in the format owner/repo".to_string()),
+            _ => Err("CF_NIX_CACHE_GITHUB_REPOSITORY must be in the format owner/repo".to_string()),
         }
     }
 }
