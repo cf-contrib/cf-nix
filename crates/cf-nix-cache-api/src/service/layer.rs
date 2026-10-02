@@ -151,7 +151,12 @@ where
             // Verifying fetches the issuer's keys, and fetch futures aren't
             // `Send`, which the router wants; a Worker is single-threaded, so
             // it runs in a `SendFuture`.
-            let identity = match SendFuture::new(verify(providers, &token)).await {
+            let verify = async {
+                let jwt = Jwt::decode(&token)?;
+                let provider = providers.find_by_claims(&jwt.claims)?;
+                provider.verify_token(&jwt).await
+            };
+            let identity = match SendFuture::new(verify).await {
                 Ok(identity) => identity,
                 Err(err) => return Ok(refuse(req, err).await),
             };
@@ -250,49 +255,22 @@ fn invalid(what: &str) -> AuthError {
     AuthError::Unauthorized(format!("invalid token: {what}"))
 }
 
-/// Verifies a token from one of `providers` and matches it against that
-/// provider's claim sets.
-async fn verify(providers: &[ProviderConfig], jwt: &str) -> Result<Identity, AuthError> {
-    let now_ms = Date::now().as_millis();
-    let key = IdentityCache::key(jwt);
-    if let Some(result) = CACHE.with_borrow(|cache| cache.get(&key, now_ms)) {
-        return result;
-    }
-
-    let token = Jwt::decode(jwt)?;
-    let provider = find_provider(providers, &token.claims)?;
-    let jwk = provider.find_key(&token.kid, now_ms).await?;
-    if !jwk
-        .verify_rs256(token.signing_input.as_bytes(), &token.signature)
-        .await?
-    {
-        return Err(invalid("bad signature"));
-    }
-
-    let result = provider.check_claims(&token.claims, now_ms / 1000);
-    // A verified token's identity can't change, so both outcomes hold until
-    // it expires. Expiry and other time-based failures are not cached.
-    if matches!(result, Ok(_) | Err(AuthError::Forbidden(_))) {
-        if let Some(exp) = token.claims.get("exp").and_then(Value::as_u64) {
-            let expires_at = (exp + LEEWAY_SECS) * 1000;
-            CACHE.with_borrow_mut(|cache| cache.insert(key, result.clone(), expires_at, now_ms));
-        }
-    }
-    result
+/// Extension methods for the configured providers. A trait rather than an
+/// inherent impl because a slice is foreign.
+trait ProvidersExtension {
+    /// The provider a token's claims say it comes from, by its `iss`.
+    fn find_by_claims(&self, claims: &Map<String, Value>) -> Result<&ProviderConfig, AuthError>;
 }
 
-/// The provider in `providers` a token claims to come from.
-fn find_provider<'a>(
-    providers: &'a [ProviderConfig],
-    claims: &Map<String, Value>,
-) -> Result<&'a ProviderConfig, AuthError> {
-    let Some(iss) = claims.get("iss").and_then(Value::as_str) else {
-        return Err(invalid("missing iss"));
-    };
-    providers
-        .iter()
-        .find(|provider| provider.issuer == iss)
-        .ok_or_else(|| AuthError::Unauthorized(format!("issuer {iss} is not configured")))
+impl ProvidersExtension for [ProviderConfig] {
+    fn find_by_claims(&self, claims: &Map<String, Value>) -> Result<&ProviderConfig, AuthError> {
+        let Some(iss) = claims.get("iss").and_then(Value::as_str) else {
+            return Err(invalid("missing iss"));
+        };
+        self.iter()
+            .find(|provider| provider.issuer == iss)
+            .ok_or_else(|| AuthError::Unauthorized(format!("issuer {iss} is not configured")))
+    }
 }
 
 /// One identity provider: its issuer, the audience its tokens must be for,
@@ -362,6 +340,36 @@ impl ProviderConfig {
             return Err(format!("{at}.claims must contain at least one claim set"));
         }
         Ok(())
+    }
+
+    /// Verifies `jwt`, a token that claims to come from this provider, and
+    /// matches it against the provider's claim sets.
+    async fn verify_token(&self, jwt: &Jwt<'_>) -> Result<Identity, AuthError> {
+        let now_ms = Date::now().as_millis();
+        let key = IdentityCache::key(jwt.raw);
+        if let Some(result) = CACHE.with_borrow(|cache| cache.get(&key, now_ms)) {
+            return result;
+        }
+
+        let jwk = self.find_key(&jwt.kid, now_ms).await?;
+        if !jwk
+            .verify_rs256(jwt.signing_input.as_bytes(), &jwt.signature)
+            .await?
+        {
+            return Err(invalid("bad signature"));
+        }
+
+        let result = self.check_claims(&jwt.claims, now_ms / 1000);
+        // A verified token's identity can't change, so both outcomes hold until
+        // it expires. Expiry and other time-based failures are not cached.
+        if matches!(result, Ok(_) | Err(AuthError::Forbidden(_))) {
+            if let Some(exp) = jwt.claims.get("exp").and_then(Value::as_u64) {
+                let expires_at = (exp + LEEWAY_SECS) * 1000;
+                CACHE
+                    .with_borrow_mut(|cache| cache.insert(key, result.clone(), expires_at, now_ms));
+            }
+        }
+        result
     }
 
     /// Checks the claims of a token whose signature `issuer`'s keys verified.
@@ -597,6 +605,8 @@ fn is_id_claim(claim: &str) -> bool {
 
 /// A decoded, not yet verified, JWT.
 struct Jwt<'a> {
+    /// The token as sent, which the auth cache is keyed by.
+    raw: &'a str,
     kid: String,
     claims: Map<String, Value>,
     /// `<header>.<payload>`, the bytes the signature covers.
@@ -638,6 +648,7 @@ impl<'a> Jwt<'a> {
         let signing_input = &jwt[..jwt.len() - parts[2].len() - 1];
 
         Ok(Jwt {
+            raw: jwt,
             kid,
             claims,
             signing_input,
@@ -1119,18 +1130,18 @@ mod tests {
     #[test]
     fn issuer_of_picks_the_configured_issuer() {
         let config = config(ISSUER, json!([{ "ref": "refs/heads/main" }]));
-        assert_eq!(find_provider(&config, &claims()).unwrap().issuer, ISSUER);
+        assert_eq!(config.find_by_claims(&claims()).unwrap().issuer, ISSUER);
 
         let mut other = claims();
         other.insert("iss".into(), "https://other.example.com".into());
         assert_eq!(
-            find_provider(&config, &other).unwrap_err(),
+            config.find_by_claims(&other).unwrap_err(),
             AuthError::Unauthorized("issuer https://other.example.com is not configured".into())
         );
 
         other.remove("iss");
         assert!(matches!(
-            find_provider(&config, &other),
+            config.find_by_claims(&other),
             Err(AuthError::Unauthorized(_))
         ));
     }
