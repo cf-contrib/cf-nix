@@ -22,7 +22,7 @@ steps:
 
 The cache stores uncompressed NARs, hence `?compression=none`. The Worker must allow the job: its `CF_NIX_WORKER_GITHUB_OWNER_ID` must own the
 repo, and one of its `CF_NIX_WORKER_GITHUB_OIDC_RULES` must match the job's
-claims. See the Worker's [CI: GitHub Actions OIDC](../cf-nix-worker#ci-github-actions-oidc).
+claims. See the Worker's [CI: GitHub Actions OIDC](../cf-nix-cache-api#ci-github-actions-oidc).
 
 ## Inputs
 
@@ -54,7 +54,7 @@ Refreshed tokens are written only to the netrc and are never printed, so they ar
 The action has no dependencies and runs straight from the git checkout of the tag, using Node built-ins only.
 
 ```sh
-nix develop -c npm test   # from packages/cf-nix-action
+nix develop -c npm test   # from packages/cf-nix-cache
 ```
 
 CI also runs the action with `uses: ./` against [`test/stub.js`](test/stub.js), which stands in for the runner's OIDC endpoint and the cache's `/v1/whoami`.

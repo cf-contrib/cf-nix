@@ -28,8 +28,9 @@ steps:
 
 | Component | Ships as | What it is |
 |---|---|---|
-| [Action](packages/cf-nix-action) | `uses: cf-contrib/cf-nix-cache@<version>` | Sets up a job's OIDC credentials for `nix copy`, and keeps them fresh during long uploads. No runtime dependencies. |
-| [Worker](packages/cf-nix-worker) | `index.js` + `index_bg.wasm` in [Releases](https://github.com/cf-contrib/cf-nix-cache/releases) | The cache, written in Rust. Serves narinfo and NARs from R2, validates and signs uploads, and authorizes uploaders by their GitHub identity. |
+| [Action](packages/cf-nix-cache) | `uses: cf-contrib/cf-nix-cache@<version>` | Sets up a job's OIDC credentials for `nix copy`, and keeps them fresh during long uploads. No runtime dependencies. |
+| [Worker](packages/cf-nix-cache-api) | `index.js` + `index_bg.wasm` in [Releases](https://github.com/cf-contrib/cf-nix-cache/releases) | The cache, written in Rust. Serves narinfo and NARs from R2, validates and signs uploads, and authorizes uploaders by their GitHub identity. |
+| [SDK](packages/cf-nix-cache-sdk) | A Rust crate in this workspace | The HTTP API's [OpenAPI document](packages/cf-nix-cache-sdk/openapi/nix/cache/v1/cachev1.yaml), and the types, server traits and client generated from it. The Worker implements its server. |
 
 The Worker, with its Terraform module, and the action are released together from one tag.
 
@@ -57,7 +58,7 @@ Reads are public. For uploads, the HTTP Basic username picks the check:
 - **`users`**: a person's GitHub token, allowed with push access to one repo. Manage who can upload with that repo's collaborators and teams.
 - **`actions`**: a GitHub Actions OIDC token, allowed when it comes from your org and matches a claim rule (repo, branch, environment, …).
 
-The only long-lived secret is the narinfo signing key, in Secrets Store. See the [Worker's README](packages/cf-nix-worker#authentication) for the details.
+The only long-lived secret is the narinfo signing key, in Secrets Store. See the [Worker's README](packages/cf-nix-cache-api#authentication) for the details.
 
 ## Do you need it?
 
@@ -76,25 +77,25 @@ Also: this is a hobby project. I wanted an excuse to spend more time with Cloudf
 ## Quick start
 
 1. **Create the signing key.** Generate it with `nix key generate-secret --key-name cache.example.com-1` and store it in Secrets Store. Clients need its public key (`nix key convert-secret-to-public`).
-2. **Deploy the Worker** with the [Terraform module](packages/cf-nix-worker/terraform), on workers.dev (a custom domain is optional), then check that `<cache-url>/healthz` returns `200`.
+2. **Deploy the Worker** with the [Terraform module](packages/cf-nix-cache-api/terraform), on workers.dev (a custom domain is optional), then check that `<cache-url>/healthz` returns `200`.
 3. **Point Nix at it** in `nix.conf`:
    ```ini
    substituters = https://cf-nix-cache.example.workers.dev https://cache.nixos.org
    trusted-public-keys = cache.example.com-1:<base64-public-key> cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
    ```
-4. **Upload.** In CI, add the [action](packages/cf-nix-action) to a job with `permissions: id-token: write`. People put their GitHub token in a netrc file; see the [Worker's README](packages/cf-nix-worker#people-github-token). Either way, push with `nix copy --to 'https://<cache>?compression=none' <paths>`: the cache stores uncompressed NARs.
+4. **Upload.** In CI, add the [action](packages/cf-nix-cache) to a job with `permissions: id-token: write`. People put their GitHub token in a netrc file; see the [Worker's README](packages/cf-nix-cache-api#people-github-token). Either way, push with `nix copy --to 'https://<cache>?compression=none' <paths>`: the cache stores uncompressed NARs.
 
 ## Development
 
 Everything runs inside the dev shell (`nix develop`), which pins Rust, `worker-build`, `wrangler`, OpenTofu and Node.
 
 ```sh
-nix develop -c cargo test                                     # the Worker's unit tests
-(cd packages/cf-nix-action && nix develop -c npm test)       # the action's tests
-(cd packages/cf-nix-worker/terraform && nix develop -c sh -c "tofu init -backend=false && tofu test")   # the module's tests
+nix develop -c cargo test                                   # the Worker's and the SDK's tests
+(cd packages/cf-nix-cache && nix develop -c npm test)       # the action's tests
+(cd packages/cf-nix-cache-api/terraform && nix develop -c sh -c "tofu init -backend=false && tofu test")   # the module's tests
 ```
 
-Each package's README has the rest: the [Worker](packages/cf-nix-worker#development) (bundle, `wrangler dev`, integration tests), the [action](packages/cf-nix-action#development) and the [module](packages/cf-nix-worker/terraform#development).
+Each package's README has the rest: the [Worker](packages/cf-nix-cache-api#development) (bundle, `wrangler dev`, integration tests), the [SDK](packages/cf-nix-cache-sdk#generated-code), the [action](packages/cf-nix-cache#development) and the [module](packages/cf-nix-cache-api/terraform#development).
 
 Releases are cut by release-please from Conventional Commits. Each release is tagged `vX.Y.Z` and attaches `index.js` and `index_bg.wasm`. Pin the action and the module to a release tag or its commit SHA: before 1.0 there is no floating major tag, because minor releases may break.
 

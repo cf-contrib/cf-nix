@@ -1,5 +1,5 @@
 {
-  "name": "cf-nix-action",
+  "name": "cf-nix-cache",
   "version": "0.0.0",
   "private": true,
   "type": "module",
