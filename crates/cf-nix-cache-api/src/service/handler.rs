@@ -1,7 +1,6 @@
-//! Handler implementations for the generated API traits.
-//!
-//! Every operation of the Nix binary cache protocol is implemented, in
-//! [`CacheServiceHandler`].
+//! The Nix binary cache protocol: every operation of the SDK's
+//! `CacheServiceApi`, in [`CacheServiceHandler`], over the bucket and signing
+//! key in the Worker's [`Config`].
 //!
 //! # Send
 //!
@@ -30,14 +29,15 @@ use worker::{Error, console_error, send::SendFuture};
 
 use super::config::{Config, SECRET_KEY};
 
-/// The Nix binary cache protocol, over the R2 bucket.
+/// The Nix binary cache protocol, over the R2 bucket. Narinfo and NARs are
+/// stored as `<hash>.narinfo` and `<hash>.nar`, and served as stored.
 #[derive(Clone)]
 pub struct CacheServiceHandler {
     config: Arc<Config>,
 }
 
 impl CacheServiceHandler {
-    /// Creates a handler over the Worker's configuration.
+    /// A handler over the Worker's configuration, shared with the auth layer.
     pub fn new(config: Arc<Config>) -> Self {
         Self { config }
     }
@@ -45,21 +45,17 @@ impl CacheServiceHandler {
 
 #[async_trait::async_trait]
 impl CacheServiceApi for CacheServiceHandler {
-    /// GET /nix-cache-info
-    ///
-    /// Returns the cache configuration in the format expected by the Nix client.
+    /// `GET /nix-cache-info`: the store directory, priority and mass-query
+    /// support, in the format Nix reads.
     async fn get_nix_cache_info(&self) -> v1::GetNixCacheInfoResponse {
         v1::GetNixCacheInfoResponse::Ok(
             "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 40\n".to_string(),
         )
     }
 
-    /// POST /
-    ///
-    /// Mass query endpoint. Accepts a newline-separated list of store
-    /// path hashes in the request body and returns the subset that are
-    /// present in the cache. This allows Nix to batch-check availability
-    /// instead of issuing individual GET requests per package.
+    /// `POST /`: takes a newline-separated list of store path hashes and
+    /// returns the ones the cache has, one per line, so a client can check
+    /// many at once instead of a `HEAD` each.
     async fn post_mass_query(&self, body: String) -> v1::PostMassQueryResponse {
         SendFuture::new(async move {
             let found = async {
@@ -90,7 +86,8 @@ impl CacheServiceApi for CacheServiceHandler {
         .await
     }
 
-    /// HEAD /:hash.narinfo — used by Nix uploaders to skip already-cached paths.
+    /// `HEAD /{hash}.narinfo`: whether the cache has a store path's narinfo,
+    /// so an uploader can skip it.
     async fn head_nar_info(&self, hash: String) -> v1::HeadNarInfoResponse {
         SendFuture::new(async move {
             let head = async { self.config.bucket().head(format!("{hash}.narinfo")).await };
@@ -103,12 +100,9 @@ impl CacheServiceApi for CacheServiceHandler {
         .await
     }
 
-    /// GET /:hash.narinfo
-    ///
-    /// Retrieves a cached `.narinfo` metadata file for the store path
-    /// identified by `:hash`. The narinfo contains references, nar hash,
-    /// file size, and other metadata required by Nix to perform
-    /// substitution of the corresponding store path.
+    /// `GET /{hash}.narinfo`: the narinfo of the store path whose hash part
+    /// is `hash`, as it was uploaded, with a `Sig:` line if the Worker signed
+    /// it.
     async fn get_nar_info(&self, hash: String) -> v1::GetNarInfoResponse {
         SendFuture::new(async move {
             // Served as stored: the text Nix uploaded, plus a Sig: line if the
@@ -150,12 +144,9 @@ impl CacheServiceApi for CacheServiceHandler {
         .await
     }
 
-    /// PUT /:hash.narinfo
-    ///
-    /// Uploads a `.narinfo` metadata file for the store path identified
-    /// by `:hash` into the cache. The request body should contain the
-    /// narinfo contents. This allows for populating the cache with build
-    /// results from external sources.
+    /// `PUT /{hash}.narinfo`: stores a narinfo as sent, once it parses and
+    /// validates and its `StorePath` matches `hash`. One without a `Sig:` is
+    /// signed with `CF_NIX_CACHE_API_SECRET`, and refused when no key is set.
     async fn put_nar_info(&self, hash: String, body: String) -> v1::PutNarInfoResponse {
         SendFuture::new(async move {
             let bad_request =
@@ -217,7 +208,8 @@ impl CacheServiceApi for CacheServiceHandler {
         .await
     }
 
-    /// HEAD /nar/:hash.nar — used by Nix uploaders to skip already-cached NARs.
+    /// `HEAD /nar/{hash}.nar`: whether the cache has a NAR, so an uploader
+    /// can skip it.
     async fn head_nar(&self, hash: String) -> v1::HeadNarResponse {
         SendFuture::new(async move {
             let head = async { self.config.bucket().head(format!("{hash}.nar")).await };
@@ -230,11 +222,8 @@ impl CacheServiceApi for CacheServiceHandler {
         .await
     }
 
-    /// GET /nar/:hash.nar
-    ///
-    /// Serves the actual NAR archive (the binary payload) for the store
-    /// path identified by `:hash`, fetched by Nix after reading the
-    /// corresponding `.narinfo` metadata.
+    /// `GET /nar/{hash}.nar`: the NAR a narinfo's `URL` points at, `hash`
+    /// being its file hash.
     async fn get_nar(&self, hash: String) -> v1::GetNarResponse {
         SendFuture::new(async move {
             let read = async {
@@ -262,11 +251,9 @@ impl CacheServiceApi for CacheServiceHandler {
         .await
     }
 
-    /// PUT /nar/:hash.nar
-    ///
-    /// Uploads a NAR archive for the store path identified by `:hash`.
-    /// Uploaded alongside the corresponding `.narinfo` to fully populate
-    /// a store path in the cache.
+    /// `PUT /nar/{hash}.nar`: stores a NAR as sent. Compressed NARs aren't
+    /// supported: the narinfo that points at one is refused, since its
+    /// `Compression` must be `none`.
     async fn put_nar(&self, hash: String, body: bytes::Bytes) -> v1::PutNarResponse {
         SendFuture::new(async move {
             let write = async {

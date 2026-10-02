@@ -62,7 +62,8 @@ impl Config {
         &self.providers
     }
 
-    /// Reads the narinfo signing key, or `None` if none is configured.
+    /// Reads the narinfo signing key, `<key-name>:<base64>`, or `None` if
+    /// none is configured.
     pub async fn secret(&self) -> worker::Result<Option<String>> {
         self.secret.read().await
     }
@@ -287,8 +288,11 @@ fn is_id_claim(claim: &str) -> bool {
 /// Terraform. `wrangler dev` and plain `secret_text` bindings are read as a
 /// var.
 enum SecretConfig {
+    /// A Secrets Store binding, read when an upload needs signing.
     Store(SecretStore),
+    /// A plain secret or var.
     Text(String),
+    /// Neither: only narinfo the uploader signed can be stored.
     Unset,
 }
 

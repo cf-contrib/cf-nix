@@ -14,12 +14,13 @@
 //!   and validates it the way the Worker does before storing an upload, and
 //!   (`signing` feature) `NarInfoSigKey`, which signs one the way Nix does.
 //! - **Server** (`server` feature): `CacheServiceApi`, a response enum per
-//!   operation, and `cache_service_api_router`, an axum router over it that checks
-//!   requests against the spec before they reach a handler.
+//!   operation, and `cache_service_api_router`, an axum router over it that
+//!   checks requests against the document before they reach a handler.
 //! - **Client** (`client` feature): `HttpClient`, a method per operation.
 //! - **Health**: the endpoints a server answers beside the API,
 //!   [`v1::HEALTH_LIVE_PATH`] and [`v1::HEALTH_READY_PATH`]; `HealthHandler`,
-//!   which answers them (`server` feature), and `HealthClient`, which asks
+//!   which answers them and asks each `HealthCheck` it's given before
+//!   answering ready (`server` feature), and `HealthClient`, which asks
 //!   (`client` feature).
 //!
 //! # Generated code

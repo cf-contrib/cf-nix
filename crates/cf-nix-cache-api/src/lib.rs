@@ -1,3 +1,12 @@
+//! The Worker half of cf-nix-cache: a Nix binary cache on Cloudflare Workers
+//! and R2.
+//!
+//! Each request reads the Worker's configuration from its bindings, then
+//! serves the SDK's router over it: the cache protocol, with the auth layer
+//! authorizing every upload before its handler, and the health endpoints
+//! beside it. A configuration that can't be read, an unbound bucket or an
+//! invalid provider list, fails every request instead.
+
 mod service;
 
 use std::sync::Arc;

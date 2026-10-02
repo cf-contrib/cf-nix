@@ -3,7 +3,7 @@
 //! API's OpenAPI document.
 
 /// The liveness endpoint: the server is up and serving HTTP. Shared by the
-/// server that answers it and the [`HealthClient`] that asks, so the two can't
+/// server that answers it and the `HealthClient` that asks, so the two can't
 /// drift apart.
 pub const HEALTH_LIVE_PATH: &str = "/health/live";
 
