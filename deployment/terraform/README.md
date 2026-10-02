@@ -17,7 +17,8 @@ module "cf_nix_cache" {
   # Who may upload: OIDC tokens from these providers that match a claim set.
   oidc_providers = [{
     # GitHub Actions jobs in this org's repo, on main. The audience defaults
-    # to the cache URL.
+    # to the cache URL. GitHub gives tokens to every repository on github.com,
+    # so pin your org in every claim set.
     issuer = "https://token.actions.githubusercontent.com"
     claims = [{
       repository_owner_id = "100000001" # gh api orgs/<org> --jq .id
@@ -58,7 +59,7 @@ wrangler secrets-store secret create <store-id> --name cf-nix-cache-signing-key 
 export CLOUDFLARE_API_TOKEN=...
 tofu init
 tofu apply
-curl -fsS "$(tofu output -raw cache_url)/healthz"   # 500 if the config or the signing key is wrong
+curl -fsS "$(tofu output -raw cache_url)/health/ready"   # 200 once the Worker is serving
 ```
 
 Terraform only references the secret by store ID and name. The key never

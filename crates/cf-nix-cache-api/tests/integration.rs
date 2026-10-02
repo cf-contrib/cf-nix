@@ -3,7 +3,8 @@
 mod helper;
 
 use cf_nix_cache_sdk::v1::{
-    ApiOpError, Error, ErrorCode, GetNarApiError, GetNarInfoApiError, PutNarInfoApiError,
+    ApiOpError, Error, ErrorCode, GetNarApiError, GetNarInfoApiError, HealthClient,
+    PutNarInfoApiError,
 };
 use serde_json::{Value, json};
 
@@ -258,11 +259,10 @@ async fn test_put_forbids_a_token_no_claim_set_allows() {
 }
 
 #[tokio::test]
-async fn test_healthz() {
-    // Not in the spec, so the client has no method for it.
-    let resp = helper::get("healthz").await;
-    assert_eq!(resp.status(), 200);
-    assert_eq!(resp.text().await.expect("the body failed"), "ok");
+async fn test_health() {
+    let health = HealthClient::new(helper::BASE_URL);
+    assert!(health.is_live().await.expect("the request failed"));
+    assert!(health.is_ready().await.expect("the request failed"));
 }
 
 #[tokio::test]

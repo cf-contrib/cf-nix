@@ -21,6 +21,8 @@ axum = { version = "0.8", default-features = false, features = ["json"] }
 bytes = "1"
 # Reads and discards the body of a refused upload; see the auth middleware.
 http-body-util = "0.1"
+# The auth layer: a tower Layer and Service over the API's routes.
+tower-layer = "0.3"
 tower-service = "0.3"
 
 # Decodes the parts of an OIDC token.

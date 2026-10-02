@@ -1,12 +1,12 @@
-//! Upload auth, as axum middleware: every `PUT` needs an OIDC token from a
+//! Upload auth, as a tower layer: every `PUT` needs an OIDC token from a
 //! provider `CF_NIX_CACHE_API_OIDC_PROVIDERS` names, as the password of HTTP
 //! Basic credentials, since a netrc file is the only place Nix sends them from.
 //! The username isn't read.
 //!
-//! [`authorize`] is layered over the API's routes in the crate root. It runs
-//! before the request reaches its handler, and so before the body is read: an
-//! upload without credentials is refused without buffering it. Reads pass
-//! straight through.
+//! [`AuthorizeLayer`] is layered over the API's routes in the crate root. It
+//! runs before the request reaches its handler, and so before the body is
+//! read: an upload without credentials is refused without buffering it. Reads
+//! pass straight through.
 //!
 //! OIDC auth, for any issuer: GitHub Actions, Cloudflare Access, GitLab, or
 //! a broker that issues its own tokens.
@@ -20,23 +20,28 @@
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap},
+    convert::Infallible,
     fmt,
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
 };
 
 use axum::{
     Json,
-    extract::{Request, State},
+    extract::Request,
     http::{Method, StatusCode, header::AUTHORIZATION},
-    middleware::Next,
     response::{IntoResponse, Response},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use cf_nix_cache_sdk::v1::ErrorCode;
+use cf_nix_cache_sdk::v1::{self, ErrorCode};
 use http_auth_basic::Credentials;
 use http_body_util::BodyExt;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use tower_layer::Layer;
+use tower_service::Service;
 use web_sys::{CryptoKey, WorkerGlobalScope};
 use worker::{
     Date, Env, Fetch, console_error, console_log,
@@ -46,7 +51,143 @@ use worker::{
     wasm_bindgen_futures::JsFuture,
 };
 
-use crate::error;
+/// The binding of the providers whose tokens may upload.
+const PROVIDERS_KEY: &str = "CF_NIX_CACHE_API_OIDC_PROVIDERS";
+
+/// Clock tolerance for `exp` and `nbf`.
+const LEEWAY_SECS: u64 = 60;
+
+/// How long a fetched JWKS is trusted before it's fetched again.
+const JWKS_TTL_MS: u64 = 60 * 60 * 1000;
+
+/// An unknown `kid` refetches an issuer's JWKS at most this often, so tokens
+/// with made-up key IDs can't make the Worker hammer the issuer.
+const JWKS_MIN_REFETCH_MS: u64 = 60 * 1000;
+
+thread_local! {
+    /// Each issuer's signing keys, by issuer.
+    static JWKS: RefCell<HashMap<String, KeySet>> = RefCell::new(HashMap::new());
+    static CACHE: RefCell<IdentityCache> = RefCell::new(IdentityCache::new());
+}
+
+/// Authorizes every `PUT` before the routes it's layered over, over the
+/// Worker's bindings. Every other method passes through.
+#[derive(Clone)]
+pub struct AuthorizeLayer {
+    env: Env,
+}
+
+impl AuthorizeLayer {
+    /// A layer that reads the providers from `env`.
+    pub fn new(env: Env) -> Self {
+        Self { env }
+    }
+}
+
+impl<S> Layer<S> for AuthorizeLayer {
+    type Service = Authorize<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        Authorize {
+            inner,
+            env: self.env.clone(),
+        }
+    }
+}
+
+/// [`AuthorizeLayer`]'s service: authorizes an upload, logs the identity it
+/// resolved to (the token's subject and issuer, and the claim set that let it
+/// in), then hands the request to the service it wraps.
+#[derive(Clone)]
+pub struct Authorize<S> {
+    inner: S,
+    env: Env,
+}
+
+impl<S> Service<Request> for Authorize<S>
+where
+    S: Service<Request, Response = Response, Error = Infallible> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+{
+    type Response = Response;
+    type Error = Infallible;
+    type Future = Pin<Box<dyn Future<Output = Result<Response, Infallible>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Infallible>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Request) -> Self::Future {
+        // The service polled ready is the one to call: a clone takes its
+        // place for the next request.
+        let clone = self.inner.clone();
+        let mut inner = std::mem::replace(&mut self.inner, clone);
+        let env = self.env.clone();
+
+        Box::pin(async move {
+            if req.method() != Method::PUT {
+                return inner.call(req).await;
+            }
+
+            // The providers whose tokens may upload. None configured means
+            // uploads are off.
+            let config = match IdentityConfig::from_env(&env) {
+                Ok(Some(config)) => config,
+                Ok(None) => {
+                    let err = AuthError::Unauthorized(format!(
+                        "uploads are off: {PROVIDERS_KEY} is not set"
+                    ));
+                    return Ok(refuse(req, err).await);
+                }
+                Err(err) => return Ok(refuse(req, err).await),
+            };
+
+            // The token: the password of the request's HTTP Basic credentials.
+            let header = req
+                .headers()
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok());
+            let token = match token(header) {
+                Ok(token) => token,
+                Err(err) => return Ok(refuse(req, err).await),
+            };
+
+            // Verifying fetches the issuer's keys, and fetch futures aren't
+            // `Send`, which the router wants; a Worker is single-threaded, so
+            // it runs in a `SendFuture`.
+            let identity = match SendFuture::new(config.verify(&token)).await {
+                Ok(identity) => identity,
+                Err(err) => return Ok(refuse(req, err).await),
+            };
+
+            console_log!("PUT {} by {identity}", req.uri().path());
+            inner.call(req).await
+        })
+    }
+}
+
+/// Refuses an upload with `err`, after reading its body a chunk at a time and
+/// keeping none. An uploader that sent `Expect: 100-continue`, as Nix's
+/// libcurl does for a large one, otherwise waits for the body to be read, and
+/// the upload hangs instead of failing.
+async fn refuse(req: Request, err: AuthError) -> Response {
+    let mut body = req.into_body();
+    while let Some(Ok(_)) = body.frame().await {}
+    err.into_response()
+}
+
+/// The token in an `Authorization: Basic` header: its password.
+fn token(header: Option<&str>) -> Result<String, AuthError> {
+    let Some(header) = header else {
+        return Err(AuthError::Unauthorized("missing credentials".to_string()));
+    };
+    match Credentials::from_header(header.to_string()) {
+        Ok(credentials) if !credentials.password.is_empty() => Ok(credentials.password),
+        _ => Err(AuthError::Unauthorized(
+            "invalid credentials: send HTTP Basic auth with the token as the password".to_string(),
+        )),
+    }
+}
 
 /// The identity an authorized upload was resolved to. Logged for every upload.
 #[derive(Clone, Debug, PartialEq)]
@@ -69,55 +210,6 @@ impl fmt::Display for Identity {
     }
 }
 
-/// Per-isolate cache of auth results, keyed by the SHA-256 of the credential
-/// so raw tokens are never stored.
-///
-/// Holds refusals (`403`) as well as identities, so a token no claim set
-/// allows isn't verified again on every request either.
-struct IdentityCache {
-    entries: HashMap<[u8; 32], (u64, Result<Identity, AuthError>)>,
-}
-
-impl IdentityCache {
-    /// Upper bound on entries, so a flood of distinct credentials can't grow
-    /// the isolate's memory without limit.
-    const MAX_ENTRIES: usize = 1024;
-
-    fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-        }
-    }
-
-    fn key(credential: &str) -> [u8; 32] {
-        Sha256::digest(credential.as_bytes()).into()
-    }
-
-    fn get(&self, key: &[u8; 32], now_ms: u64) -> Option<Result<Identity, AuthError>> {
-        self.entries
-            .get(key)
-            .filter(|(expires_at, _)| now_ms < *expires_at)
-            .map(|(_, result)| result.clone())
-    }
-
-    fn insert(
-        &mut self,
-        key: [u8; 32],
-        result: Result<Identity, AuthError>,
-        expires_at: u64,
-        now_ms: u64,
-    ) {
-        if self.entries.len() >= Self::MAX_ENTRIES {
-            self.entries
-                .retain(|_, (expires_at, _)| now_ms < *expires_at);
-        }
-        if self.entries.len() >= Self::MAX_ENTRIES {
-            self.entries.clear();
-        }
-        self.entries.insert(key, (expires_at, result));
-    }
-}
-
 /// Why a request was not authorized.
 #[derive(Clone, Debug, PartialEq)]
 pub enum AuthError {
@@ -132,28 +224,31 @@ pub enum AuthError {
     Upstream(String),
 }
 
-/// The error, as the JSON every error has. AuthConfig and upstream details are
+/// The error, as the JSON every error has. IdentityConfig and upstream details are
 /// logged, not returned.
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         let (status, body) = match self {
             AuthError::Unauthorized(msg) => (
                 StatusCode::UNAUTHORIZED,
-                error(ErrorCode::Unauthorized, msg),
+                v1::Error::new(ErrorCode::Unauthorized, msg),
             ),
-            AuthError::Forbidden(msg) => (StatusCode::FORBIDDEN, error(ErrorCode::Forbidden, msg)),
+            AuthError::Forbidden(msg) => (
+                StatusCode::FORBIDDEN,
+                v1::Error::new(ErrorCode::Forbidden, msg),
+            ),
             AuthError::Config(msg) => {
                 console_error!("auth config invalid: {msg}");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    error(ErrorCode::Misconfigured, "auth is misconfigured"),
+                    v1::Error::new(ErrorCode::Misconfigured, "auth is misconfigured"),
                 )
             }
             AuthError::Upstream(msg) => {
                 console_error!("auth upstream failure: {msg}");
                 (
                     StatusCode::BAD_GATEWAY,
-                    error(
+                    v1::Error::new(
                         ErrorCode::UpstreamError,
                         "the token's issuer couldn't be reached",
                     ),
@@ -164,125 +259,28 @@ impl IntoResponse for AuthError {
     }
 }
 
-/// Authorizes every `PUT`, and logs the identity it resolved to: the token's
-/// subject and issuer, and the claim set that let it in. Every other method
-/// passes through.
-///
-/// Verifying a token fetches the issuer's keys, and fetch futures aren't
-/// `Send`, which axum wants; a Worker is single-threaded, so it runs in a
-/// `SendFuture`.
-pub async fn authorize(State(env): State<Env>, req: Request, next: Next) -> Response {
-    if req.method() != Method::PUT {
-        return next.run(req).await;
-    }
-    let header = req
-        .headers()
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
-    match SendFuture::new(async move { Identity::from_header(header.as_deref(), &env).await }).await
-    {
-        Ok(identity) => {
-            console_log!("PUT {} by {identity}", req.uri().path());
-            next.run(req).await
-        }
-        Err(err) => {
-            // Read the body before refusing, a chunk at a time and keeping
-            // none. An uploader that sent `Expect: 100-continue`, as Nix's
-            // libcurl does for a large one, otherwise waits for the body to
-            // be read, and the upload hangs instead of failing.
-            let mut body = req.into_body();
-            while let Some(Ok(_)) = body.frame().await {}
-            err.into_response()
-        }
-    }
-}
-
-/// The token in an `Authorization: Basic` header: its password.
-fn token(header: Option<&str>) -> Result<String, AuthError> {
-    let Some(header) = header else {
-        return Err(AuthError::Unauthorized("missing credentials".to_string()));
-    };
-    match Credentials::from_header(header.to_string()) {
-        Ok(credentials) if !credentials.password.is_empty() => Ok(credentials.password),
-        _ => Err(AuthError::Unauthorized(
-            "invalid credentials: send HTTP Basic auth with the token as the password".to_string(),
-        )),
-    }
-}
-
-/// Checks that the auth config is valid, for `GET /healthz`.
-pub fn check_config(env: &Env) -> Result<(), String> {
-    match AuthConfig::from_env(env) {
-        Ok(_) => Ok(()),
-        Err(AuthError::Config(msg)) => Err(msg),
-        Err(err) => Err(format!("{err:?}")),
-    }
-}
-
-impl Identity {
-    /// The identity a request's `Authorization` header resolves to, if it's
-    /// allowed to upload.
-    async fn from_header(header: Option<&str>, env: &Env) -> Result<Self, AuthError> {
-        let Some(config) = AuthConfig::from_env(env)? else {
-            return Err(AuthError::Unauthorized(format!(
-                "uploads are off: {VAR} is not set"
-            )));
-        };
-        config.verify(&token(header)?).await
-    }
-}
-
-/// The binding the providers are configured in.
-const VAR: &str = "CF_NIX_CACHE_API_OIDC_PROVIDERS";
-
-/// GitHub Actions' issuer. GitHub gives a token for any audience to any
-/// repository on github.com, so its claim sets must pin the owner.
-const GITHUB_ACTIONS: &str = "https://token.actions.githubusercontent.com";
-
-/// Clock tolerance for `exp` and `nbf`.
-const LEEWAY_SECS: u64 = 60;
-/// How long a fetched JWKS is trusted before it's fetched again.
-const JWKS_TTL_MS: u64 = 60 * 60 * 1000;
-/// An unknown `kid` refetches an issuer's JWKS at most this often, so tokens
-/// with made-up key IDs can't make the Worker hammer the issuer.
-const JWKS_MIN_REFETCH_MS: u64 = 60 * 1000;
-
-thread_local! {
-    /// Each issuer's signing keys, by issuer.
-    static JWKS: RefCell<HashMap<String, KeySet>> = RefCell::new(HashMap::new());
-    static CACHE: RefCell<IdentityCache> = RefCell::new(IdentityCache::new());
+fn invalid(what: &str) -> AuthError {
+    AuthError::Unauthorized(format!("invalid token: {what}"))
 }
 
 /// The identity providers whose tokens may upload
 /// (`CF_NIX_CACHE_API_OIDC_PROVIDERS`).
 #[derive(Debug, Deserialize)]
 #[serde(transparent)]
-struct AuthConfig {
+struct IdentityConfig {
     providers: Vec<IdentityProvider>,
 }
 
-/// One identity provider: its issuer, the audience its tokens must be for,
-/// and who may upload.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct IdentityProvider {
-    /// Matched exactly against a token's `iss`.
-    issuer: String,
-    /// Expected `aud`. A trailing `/` is ignored, here and in the token.
-    audience: String,
-    /// Where its keys are. `None` means its discovery document says.
-    #[serde(default)]
-    jwks_uri: Option<String>,
-    /// A token is accepted if any claim set matches; the first one wins.
-    claims: Vec<ClaimSet>,
-}
-
-impl AuthConfig {
+impl IdentityConfig {
     /// The config in the Worker's `CF_NIX_CACHE_API_OIDC_PROVIDERS`
     /// binding, or `None` if it isn't set.
     fn from_env(env: &Env) -> Result<Option<Self>, AuthError> {
-        Self::from_var(env.var(VAR).ok().map(|value| value.to_string()).as_deref())
+        Self::from_var(
+            env.var(PROVIDERS_KEY)
+                .ok()
+                .map(|value| value.to_string())
+                .as_deref(),
+        )
     }
 
     /// The config in `value`, the binding's value, or `None` if it's unset
@@ -297,36 +295,25 @@ impl AuthConfig {
     fn parse(json: &str) -> Result<Self, String> {
         let config: Self = serde_json::from_str(json).map_err(|err| {
             format!(
-                "{VAR} must be a JSON array of {{ issuer, audience, jwks_uri?, claims }}: {err}"
+                "{PROVIDERS_KEY} must be a JSON array of {{ issuer, audience, jwks_uri?, claims }}: {err}"
             )
         })?;
         if config.providers.is_empty() {
-            return Err(format!("{VAR} must name at least one provider"));
+            return Err(format!("{PROVIDERS_KEY} must name at least one provider"));
         }
         for (index, provider) in config.providers.iter().enumerate() {
-            provider.check(&format!("{VAR}[{index}]"))?;
+            provider.check(&format!("{PROVIDERS_KEY}[{index}]"))?;
             if config.providers[..index]
                 .iter()
                 .any(|other| other.issuer == provider.issuer)
             {
                 return Err(format!(
-                    "{VAR}[{index}]: {} is configured twice",
+                    "{PROVIDERS_KEY}[{index}]: {} is configured twice",
                     provider.issuer
                 ));
             }
         }
         Ok(config)
-    }
-
-    /// The configured issuer a token claims to come from.
-    fn provider(&self, claims: &Map<String, Value>) -> Result<&IdentityProvider, AuthError> {
-        let Some(iss) = claims.get("iss").and_then(Value::as_str) else {
-            return Err(invalid("missing iss"));
-        };
-        self.providers
-            .iter()
-            .find(|provider| provider.issuer == iss)
-            .ok_or_else(|| AuthError::Unauthorized(format!("issuer {iss} is not configured")))
     }
 
     /// Verifies a token from one of the configured issuers and matches it
@@ -360,6 +347,33 @@ impl AuthConfig {
         }
         result
     }
+
+    /// The configured issuer a token claims to come from.
+    fn provider(&self, claims: &Map<String, Value>) -> Result<&IdentityProvider, AuthError> {
+        let Some(iss) = claims.get("iss").and_then(Value::as_str) else {
+            return Err(invalid("missing iss"));
+        };
+        self.providers
+            .iter()
+            .find(|provider| provider.issuer == iss)
+            .ok_or_else(|| AuthError::Unauthorized(format!("issuer {iss} is not configured")))
+    }
+}
+
+/// One identity provider: its issuer, the audience its tokens must be for,
+/// and who may upload.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IdentityProvider {
+    /// Matched exactly against a token's `iss`.
+    issuer: String,
+    /// Expected `aud`. A trailing `/` is ignored, here and in the token.
+    audience: String,
+    /// Where its keys are. `None` means its discovery document says.
+    #[serde(default)]
+    jwks_uri: Option<String>,
+    /// A token is accepted if any claim set matches; the first one wins.
+    claims: Vec<ClaimSet>,
 }
 
 impl IdentityProvider {
@@ -375,23 +389,7 @@ impl IdentityProvider {
         if self.claims.is_empty() {
             return Err(format!("{at}.claims must contain at least one claim set"));
         }
-        if self.issuer == GITHUB_ACTIONS {
-            if let Some(set) = self
-                .claims
-                .iter()
-                .position(|set| !set.0.contains_key("repository_owner_id"))
-            {
-                return Err(format!(
-                    "{at}.claims[{set}] must pin repository_owner_id: GitHub gives a token for any audience to any repository on github.com"
-                ));
-            }
-        }
         Ok(())
-    }
-
-    /// Whether `aud`, one of a token's audiences, is this issuer's.
-    fn audience_is(&self, aud: &str) -> bool {
-        aud.trim_end_matches('/') == self.audience.trim_end_matches('/')
     }
 
     /// Checks the claims of a token whose signature `issuer`'s keys verified.
@@ -461,6 +459,11 @@ impl IdentityProvider {
         })
     }
 
+    /// Whether `aud`, one of a token's audiences, is this issuer's.
+    fn audience_is(&self, aud: &str) -> bool {
+        aud.trim_end_matches('/') == self.audience.trim_end_matches('/')
+    }
+
     async fn find_key(&self, kid: &str, now_ms: u64) -> Result<Jwk, AuthError> {
         let unknown = || invalid("unknown signing key");
 
@@ -526,14 +529,6 @@ fn check_url(url: &str) -> Result<(), &'static str> {
 #[serde(try_from = "Map<String, Value>")]
 struct ClaimSet(BTreeMap<String, Pattern>);
 
-/// A claim's expected value: exact, or a prefix written with one trailing
-/// `*` (`example-org/*`). `*_id` claims must be exact.
-#[derive(Debug, PartialEq)]
-enum Pattern {
-    Exact(String),
-    Prefix(String),
-}
-
 impl TryFrom<Map<String, Value>> for ClaimSet {
     type Error = String;
 
@@ -583,6 +578,14 @@ impl ClaimSet {
                 None => false,
             })
     }
+}
+
+/// A claim's expected value: exact, or a prefix written with one trailing
+/// `*` (`example-org/*`). `*_id` claims must be exact.
+#[derive(Debug, PartialEq)]
+enum Pattern {
+    Exact(String),
+    Prefix(String),
 }
 
 impl Pattern {
@@ -635,10 +638,6 @@ struct JwtHeader {
     kid: Option<String>,
 }
 
-fn invalid(what: &str) -> AuthError {
-    AuthError::Unauthorized(format!("invalid token: {what}"))
-}
-
 impl<'a> Jwt<'a> {
     fn decode(jwt: &'a str) -> Result<Self, AuthError> {
         let segment = |s: &str| {
@@ -675,11 +674,11 @@ impl<'a> Jwt<'a> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-struct Jwk {
-    kid: String,
-    n: String,
-    e: String,
+/// The part of an issuer's discovery document the Worker reads.
+#[derive(Deserialize)]
+struct Discovery {
+    issuer: String,
+    jwks_uri: String,
 }
 
 #[derive(Deserialize)]
@@ -695,11 +694,60 @@ struct RawJwk {
     e: Option<String>,
 }
 
-/// The part of an issuer's discovery document the Worker reads.
-#[derive(Deserialize)]
-struct Discovery {
-    issuer: String,
-    jwks_uri: String,
+#[derive(Clone, Debug, PartialEq)]
+struct Jwk {
+    kid: String,
+    n: String,
+    e: String,
+}
+
+impl Jwk {
+    /// Verifies an RS256 (RSASSA-PKCS1-v1_5 with SHA-256) signature with WebCrypto.
+    async fn verify_rs256(
+        &self,
+        signing_input: &[u8],
+        signature: &[u8],
+    ) -> Result<bool, AuthError> {
+        let webcrypto = |err: JsValue| AuthError::Upstream(format!("WebCrypto: {err:?}"));
+        let object = |value: Value| -> Result<js_sys::Object, AuthError> {
+            js_sys::JSON::parse(&value.to_string())
+                .map(JsCast::unchecked_into)
+                .map_err(webcrypto)
+        };
+
+        let subtle = js_sys::global()
+            .unchecked_into::<WorkerGlobalScope>()
+            .crypto()
+            .map_err(webcrypto)?
+            .subtle();
+        let algorithm = object(json!({ "name": "RSASSA-PKCS1-v1_5", "hash": "SHA-256" }))?;
+        let key_data = object(json!({ "kty": "RSA", "n": self.n, "e": self.e, "alg": "RS256" }))?;
+        let usages = js_sys::Array::of1(&JsValue::from_str("verify"));
+
+        let key: CryptoKey = JsFuture::from(
+            subtle
+                .import_key_with_object("jwk", &key_data, &algorithm, false, &usages)
+                .map_err(webcrypto)?,
+        )
+        .await
+        .map_err(webcrypto)?
+        .unchecked_into();
+
+        // A signature WebCrypto refuses to check (e.g. wrong length) is the
+        // caller's problem, not an upstream failure.
+        let verified = subtle
+            .verify_with_object_and_buffer_source_and_buffer_source(
+                &algorithm,
+                &key,
+                &Uint8Array::from(signature),
+                &Uint8Array::from(signing_input),
+            )
+            .map(JsFuture::from);
+        match verified {
+            Ok(future) => Ok(future.await.ok().and_then(|v| v.as_bool()) == Some(true)),
+            Err(_) => Ok(false),
+        }
+    }
 }
 
 /// An issuer's signing keys, cached per isolate.
@@ -767,52 +815,52 @@ async fn fetch_json<T: serde::de::DeserializeOwned>(url: &str) -> Result<T, Auth
     resp.json().await.map_err(upstream)
 }
 
-impl Jwk {
-    /// Verifies an RS256 (RSASSA-PKCS1-v1_5 with SHA-256) signature with WebCrypto.
-    async fn verify_rs256(
-        &self,
-        signing_input: &[u8],
-        signature: &[u8],
-    ) -> Result<bool, AuthError> {
-        let webcrypto = |err: JsValue| AuthError::Upstream(format!("WebCrypto: {err:?}"));
-        let object = |value: Value| -> Result<js_sys::Object, AuthError> {
-            js_sys::JSON::parse(&value.to_string())
-                .map(JsCast::unchecked_into)
-                .map_err(webcrypto)
-        };
+/// Per-isolate cache of auth results, keyed by the SHA-256 of the credential
+/// so raw tokens are never stored.
+///
+/// Holds refusals (`403`) as well as identities, so a token no claim set
+/// allows isn't verified again on every request either.
+struct IdentityCache {
+    entries: HashMap<[u8; 32], (u64, Result<Identity, AuthError>)>,
+}
 
-        let subtle = js_sys::global()
-            .unchecked_into::<WorkerGlobalScope>()
-            .crypto()
-            .map_err(webcrypto)?
-            .subtle();
-        let algorithm = object(json!({ "name": "RSASSA-PKCS1-v1_5", "hash": "SHA-256" }))?;
-        let key_data = object(json!({ "kty": "RSA", "n": self.n, "e": self.e, "alg": "RS256" }))?;
-        let usages = js_sys::Array::of1(&JsValue::from_str("verify"));
+impl IdentityCache {
+    /// Upper bound on entries, so a flood of distinct credentials can't grow
+    /// the isolate's memory without limit.
+    const MAX_ENTRIES: usize = 1024;
 
-        let key: CryptoKey = JsFuture::from(
-            subtle
-                .import_key_with_object("jwk", &key_data, &algorithm, false, &usages)
-                .map_err(webcrypto)?,
-        )
-        .await
-        .map_err(webcrypto)?
-        .unchecked_into();
-
-        // A signature WebCrypto refuses to check (e.g. wrong length) is the
-        // caller's problem, not an upstream failure.
-        let verified = subtle
-            .verify_with_object_and_buffer_source_and_buffer_source(
-                &algorithm,
-                &key,
-                &Uint8Array::from(signature),
-                &Uint8Array::from(signing_input),
-            )
-            .map(JsFuture::from);
-        match verified {
-            Ok(future) => Ok(future.await.ok().and_then(|v| v.as_bool()) == Some(true)),
-            Err(_) => Ok(false),
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
         }
+    }
+
+    fn key(credential: &str) -> [u8; 32] {
+        Sha256::digest(credential.as_bytes()).into()
+    }
+
+    fn get(&self, key: &[u8; 32], now_ms: u64) -> Option<Result<Identity, AuthError>> {
+        self.entries
+            .get(key)
+            .filter(|(expires_at, _)| now_ms < *expires_at)
+            .map(|(_, result)| result.clone())
+    }
+
+    fn insert(
+        &mut self,
+        key: [u8; 32],
+        result: Result<Identity, AuthError>,
+        expires_at: u64,
+        now_ms: u64,
+    ) {
+        if self.entries.len() >= Self::MAX_ENTRIES {
+            self.entries
+                .retain(|_, (expires_at, _)| now_ms < *expires_at);
+        }
+        if self.entries.len() >= Self::MAX_ENTRIES {
+            self.entries.clear();
+        }
+        self.entries.insert(key, (expires_at, result));
     }
 }
 
@@ -826,14 +874,14 @@ mod tests {
 
     #[test]
     fn config_is_off_without_providers() {
-        assert!(AuthConfig::from_var(None).unwrap().is_none());
-        assert!(AuthConfig::from_var(Some("")).unwrap().is_none());
+        assert!(IdentityConfig::from_var(None).unwrap().is_none());
+        assert!(IdentityConfig::from_var(Some("")).unwrap().is_none());
     }
 
     #[test]
     fn config_fails_closed() {
         assert!(matches!(
-            AuthConfig::from_var(Some("not json")),
+            IdentityConfig::from_var(Some("not json")),
             Err(AuthError::Config(_))
         ));
     }
@@ -915,17 +963,17 @@ mod tests {
     const ISSUER: &str = "https://issuer.example.com";
 
     /// One provider with these claim sets.
-    fn config(issuer: &str, claims: Value) -> AuthConfig {
+    fn config(issuer: &str, claims: Value) -> IdentityConfig {
         let json = json!([{
             "issuer": issuer,
             "audience": "https://cache.example.com",
             "claims": claims,
         }]);
-        AuthConfig::parse(&json.to_string()).expect("config should parse")
+        IdentityConfig::parse(&json.to_string()).expect("config should parse")
     }
 
     fn parse_err(json: Value) -> String {
-        AuthConfig::parse(&json.to_string()).unwrap_err()
+        IdentityConfig::parse(&json.to_string()).unwrap_err()
     }
 
     fn claims() -> Map<String, Value> {
@@ -1017,7 +1065,7 @@ mod tests {
     #[test]
     fn audience_ignores_a_trailing_slash_on_either_side() {
         let json = json!([{ "issuer": ISSUER, "audience": "https://cache.example.com/", "claims": [{ "ref": "x" }] }]);
-        let config = AuthConfig::parse(&json.to_string()).unwrap();
+        let config = IdentityConfig::parse(&json.to_string()).unwrap();
         let provider = &config.providers[0];
         assert!(provider.audience_is("https://cache.example.com"));
         assert!(provider.audience_is("https://cache.example.com/"));
@@ -1047,25 +1095,6 @@ mod tests {
             let err = parse_err(json!([{ "issuer": ISSUER, "audience": "x", "claims": claims }]));
             assert!(err.contains(expected), "{claims}: {err}");
         }
-    }
-
-    #[test]
-    fn config_makes_github_actions_pin_the_owner() {
-        // Any repository on github.com can get a token for any audience.
-        let err = parse_err(json!([{
-            "issuer": GITHUB_ACTIONS,
-            "audience": "https://cache.example.com",
-            "claims": [{ "repository_owner_id": "100000001" }, { "ref": "refs/heads/main" }],
-        }]));
-        assert!(
-            err.contains("claims[1] must pin repository_owner_id"),
-            "{err}"
-        );
-
-        config(
-            GITHUB_ACTIONS,
-            json!([{ "repository_owner_id": "100000001", "ref": "refs/heads/main" }]),
-        );
     }
 
     #[test]

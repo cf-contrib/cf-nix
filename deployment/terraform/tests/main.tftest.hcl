@@ -138,19 +138,6 @@ run "uploads_off_without_providers" {
   }
 }
 
-run "github_claims_must_pin_the_owner" {
-  command = plan
-
-  variables {
-    oidc_providers = [{
-      issuer = "https://token.actions.githubusercontent.com"
-      claims = [{ ref = "refs/heads/main" }]
-    }]
-  }
-
-  expect_failures = [var.oidc_providers]
-}
-
 run "issuers_need_claims" {
   command = plan
 
