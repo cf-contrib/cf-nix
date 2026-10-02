@@ -10,13 +10,13 @@
       "bump-minor-pre-major": true,
       "extra-files": [
         "README.md",
-        "packages/cf-nix-cache/README.md",
-        "packages/cf-nix-cache-api/terraform/README.md",
-        "packages/cf-nix-cache-api/terraform/variables.tf",
-        "packages/cf-nix-cache-sdk/openapi/nix/cache/v1/cachev1.yaml",
+        "action/README.md",
+        "deployment/terraform/README.md",
+        "deployment/terraform/variables.tf",
+        "crates/cf-nix-cache-sdk/openapi/nix/cache/v1/cachev1.yaml",
         {
           "type": "toml",
-          "path": "packages/cf-nix-cache-api/Cargo.toml",
+          "path": "crates/cf-nix-cache-api/Cargo.toml",
           "jsonpath": "$.package.version"
         },
         {
@@ -26,7 +26,7 @@
         },
         {
           "type": "toml",
-          "path": "packages/cf-nix-cache-sdk/Cargo.toml",
+          "path": "crates/cf-nix-cache-sdk/Cargo.toml",
           "jsonpath": "$.package.version"
         },
         {

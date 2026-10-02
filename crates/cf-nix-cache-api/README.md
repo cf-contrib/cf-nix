@@ -21,7 +21,7 @@ for a GitHub Actions OIDC token.
    gh api orgs/<org> --jq .id           # github_owner_id
    gh api repos/<org>/<repo> --jq .id   # repository_id in a rule
    ```
-3. **Deploy** the released bundle with the [Terraform / OpenTofu module](terraform) (`//packages/cf-nix-cache-api/terraform?ref=<version>`). It downloads the release (`index.js` and `index_bg.wasm`, both required), creates the R2 bucket, and sets up the bindings below and the workers.dev URL (or an optional custom domain). To deploy a local build instead, run `worker-build --release` here and point the module's `bundle_dir` at `build/`.
+3. **Deploy** the released bundle with the [Terraform / OpenTofu module](../../deployment/terraform) (`//deployment/terraform?ref=<version>`). It downloads the release (`index.js` and `index_bg.wasm`, both required), creates the R2 bucket, and sets up the bindings below and the workers.dev URL (or an optional custom domain). To deploy a local build instead, run `worker-build --release` here and point the module's `bundle_dir` at this directory's `build/`.
 4. **Check** that `<cache-url>/healthz` returns `200`. A `500` means the auth config is invalid, the bucket isn't bound, or the signing key can't be read or parsed; the reason is in Workers Logs.
 
 `wrangler.toml` in this directory is for local development, not production.
@@ -111,7 +111,7 @@ audience must equal `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE` (a trailing `/` is
 ignored). The audience can't be GitHub's default `https://github.com/<owner>`,
 so a token requested for AWS or GCP doesn't work here.
 
-In a workflow, the [action](../cf-nix-cache) sets this up: it gets the job's
+In a workflow, the [action](../../action) sets this up: it gets the job's
 OIDC token, checks it against `/v1/whoami`, points Nix at a netrc file holding
 it, and refreshes it every 4 minutes. GitHub OIDC tokens expire after 5 minutes,
 and Nix reads the netrc again for every request, so long uploads keep working.

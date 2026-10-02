@@ -1,13 +1,13 @@
 # cf-nix-cache Terraform module
 
-> The Terraform / OpenTofu half of [cf-nix-cache](../../..): deploys the released
+> The Terraform / OpenTofu half of [cf-nix-cache](../..): deploys the released
 > Worker bundle to Cloudflare Workers with its R2 bucket, bindings and a
 > workers.dev URL (or, optionally, a custom domain). No `wrangler` or local
 > build is needed.
 
 ```hcl
 module "cf_nix_cache" {
-  source = "git::https://github.com/cf-contrib/cf-nix-cache.git//packages/cf-nix-cache-api/terraform?ref=v0.4.0" # x-release-please-version
+  source = "git::https://github.com/cf-contrib/cf-nix-cache.git//deployment/terraform?ref=v0.4.0" # x-release-please-version
 
   account_id         = var.account_id
   hostname           = "cf-nix-cache.example.workers.dev"
@@ -62,7 +62,7 @@ enters Terraform state or the plan. Clients need the matching public key in
 `nix key convert-secret-to-public < secret-key-file`.
 
 Then set up upload credentials as described in the Worker's
-[Authentication](../README.md#authentication) section, and push with
+[Authentication](../../crates/cf-nix-cache-api/README.md#authentication) section, and push with
 `nix copy --to '<url>?compression=none'`: the cache stores uncompressed NARs.
 
 ## Inputs
