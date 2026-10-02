@@ -1,15 +1,15 @@
 use std::fmt::Write;
 
 mod auth;
-mod model;
 
 use axum::{
     Json,
     http::StatusCode,
     response::{IntoResponse, Response as HttpResponse},
 };
-use cf_nix_cache_sdk::v1::{self, ErrorCode};
-use model::{NarInfo, NarInfoContext, NarInfoSigKey, Validate, append_sig};
+use cf_nix_cache_sdk::v1::{
+    self, ErrorCode, NarInfo, NarInfoContext, NarInfoSigKey, Validate, append_sig,
+};
 use tower_service::Service;
 use worker::{send::SendFuture, *};
 
@@ -150,7 +150,9 @@ async fn check_health(env: &Env) -> std::result::Result<(), String> {
         .map_err(|_| format!("{BUCKET} is not bound"))?;
     auth::check_config(env)?;
     match signing_secret(env).await {
-        Ok(Some(secret)) => NarInfoSigKey::parse(&secret).map(|_| ()),
+        Ok(Some(secret)) => NarInfoSigKey::parse(&secret)
+            .map(|_| ())
+            .map_err(|err| format!("CF_NIX_WORKER_SECRET: {err}")),
         Ok(None) => Ok(()),
         Err(err) => Err(format!("reading CF_NIX_WORKER_SECRET failed: {err}")),
     }

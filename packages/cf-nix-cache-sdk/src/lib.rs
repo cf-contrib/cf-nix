@@ -11,6 +11,9 @@
 //!
 //! - **Types**: [`v1::Identity`], what `GET /v1/whoami` returns, and
 //!   [`v1::Error`], the body of every error.
+//! - **Narinfo**: [`v1::NarInfo`], which parses a `.narinfo` the way Nix does
+//!   and validates it the way the Worker does before storing an upload, and
+//!   (`signing` feature) `NarInfoSigKey`, which signs one the way Nix does.
 //! - **Server** (`server` feature): a trait per tag, `CacheApi` and `AuthApi`,
 //!   a response enum per operation, and `build_router`, an axum router over
 //!   both that checks requests against the spec before they reach a handler.
@@ -20,10 +23,14 @@
 //!
 //! `openapi/nix/cache/v1/cachev1.yaml` is the source. `build.rs` runs
 //! [openapi-to-rust](https://github.com/gpu-cli/openapi-to-rust) over it into
-//! `OUT_DIR`, so none of it is checked in or edited by hand.
+//! `OUT_DIR`, so none of it is checked in or edited by hand. What is
+//! hand-written, the narinfo format, is in `narinfo.rs`, and mounted into `v1`
+//! beside it.
 
-/// Everything for `nix.cache.v1`: the types, and the server and client the
-/// crate's features enable.
+mod narinfo;
+
+/// Everything for `nix.cache.v1`: the types, the narinfo format, and the server
+/// and client the crate's features enable.
 pub mod v1 {
     // The generated module root opens with `unused_imports`, which `include!`
     // can't take: build.rs strips it, and it's restated here. The clippy lints
@@ -37,4 +44,6 @@ pub mod v1 {
     )]
 
     include!(concat!(env!("OUT_DIR"), "/cachev1/mod.rs"));
+
+    pub use crate::narinfo::*;
 }

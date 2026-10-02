@@ -14,18 +14,17 @@ worker = { version = "0.8", features = ["http", "axum"] }
 worker-macros = { version = "0.8" }
 
 # The API: its types, and the traits and router the Worker implements.
-cf-nix-cache-sdk = { path = "../cf-nix-cache-sdk", features = ["server"] }
+cf-nix-cache-sdk = { path = "../cf-nix-cache-sdk", features = ["server", "signing"] }
 # Named by the generated traits and router; the versions the SDK builds with.
 async-trait = "0.1"
 axum = { version = "0.8", default-features = false, features = ["json"] }
 bytes = "1"
 tower-service = "0.3"
 
-# Used for validating NarHash/FileHash formats in narinfo uploads.
+# Decodes the parts of an OIDC token.
 base64 = "0.23.0"
 
-# Used for server-side narinfo signing (issue #13).
-ed25519-dalek = { version = "3.0", default-features = false, features = ["alloc"] }
+# Keys the auth cache by the SHA-256 of the credential.
 sha2 = { version = "0.11", default-features = false }
 
 # Used for GitHub identity auth on uploads (issue #67): OIDC rules, JWT

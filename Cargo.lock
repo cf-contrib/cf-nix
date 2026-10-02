@@ -223,7 +223,6 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "cf-nix-cache-sdk",
- "ed25519-dalek",
  "http-auth-basic",
  "reqwest",
  "serde",
@@ -242,7 +241,9 @@ version = "0.4.0"
 dependencies = [
  "async-trait",
  "axum",
+ "base64 0.23.1",
  "bytes",
+ "ed25519-dalek",
  "futures-util",
  "http-body-util",
  "jsonschema",
