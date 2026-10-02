@@ -29,23 +29,23 @@ sequenceDiagram
     participant Reader as nix (substitute)
     participant Uploader as nix copy
     participant Issuer as OIDC issuer
-    participant Worker as cf-nix-cache Worker
+    participant Api as cf-nix-cache-api
     participant R2 as R2 bucket
 
     Note over Reader,R2: Reads are public
-    Reader->>Worker: GET narinfo / NAR
-    Worker->>R2: get
-    Worker-->>Reader: object
+    Reader->>Api: GET narinfo / NAR
+    Api->>R2: get
+    Api-->>Reader: object
 
-    Note over Uploader,R2: Uploads need a token from an issuer the Worker trusts
+    Note over Uploader,R2: Uploads need a token from an issuer cf-nix-cache-api trusts
     Uploader->>Issuer: token for the cache's audience
     Issuer-->>Uploader: JWT (5 minutes for GitHub Actions)
-    Uploader->>Worker: PUT, HTTP Basic with the token as the password
-    Worker->>Issuer: discovery and signing keys
+    Uploader->>Api: PUT, HTTP Basic with the token as the password
+    Api->>Issuer: discovery and signing keys
     Note right of Issuer: cached for an hour, not fetched per request
-    Worker->>Worker: verify the token, match a claim set
-    Worker->>Worker: validate narinfo, sign it if unsigned
-    Worker->>R2: put
+    Api->>Api: verify the token, match a claim set
+    Api->>Api: validate narinfo, sign it if unsigned
+    Api->>R2: put
 ```
 
 Reads are public. An upload needs a token from an issuer you configure, for
