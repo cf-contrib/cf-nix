@@ -376,7 +376,7 @@ impl ProviderConfig {
 
         match JWKS.with_borrow(|sets| KeySet::lookup(sets.get(&self.issuer), kid, now_ms)) {
             Lookup::Hit(key) => return Ok(key),
-            Lookup::Miss => return Err(unknown()),
+            Lookup::Unknown => return Err(unknown()),
             Lookup::Fetch => {}
         }
 
@@ -554,7 +554,7 @@ enum Lookup {
     Hit(Jwk),
     Fetch,
     /// Unknown `kid`, and the JWKS was fetched too recently to try again.
-    Miss,
+    Unknown,
 }
 
 impl KeySet {
@@ -586,7 +586,7 @@ impl KeySet {
         match set.find(kid) {
             Some(key) if age < JWKS_TTL_MS => Lookup::Hit(key.clone()),
             Some(_) => Lookup::Fetch,
-            None if age < JWKS_MIN_REFETCH_MS => Lookup::Miss,
+            None if age < JWKS_MIN_REFETCH_MS => Lookup::Unknown,
             None => Lookup::Fetch,
         }
     }
@@ -924,7 +924,7 @@ mod tests {
             KeySet::lookup(Some(&set), "key-1", JWKS_TTL_MS),
             Lookup::Fetch
         );
-        assert_eq!(KeySet::lookup(Some(&set), "key-2", 1), Lookup::Miss);
+        assert_eq!(KeySet::lookup(Some(&set), "key-2", 1), Lookup::Unknown);
         assert_eq!(
             KeySet::lookup(Some(&set), "key-2", JWKS_MIN_REFETCH_MS),
             Lookup::Fetch
