@@ -34,6 +34,7 @@ async fn test_get_nix_cache_info() {
 
 #[tokio::test]
 async fn test_get_narinfo() {
+    let _lock = helper::NARINFO_LOCK.lock().await;
     let client = helper::client();
     let data = narinfo_fixture(NARINFO);
 
@@ -56,6 +57,7 @@ async fn test_get_narinfo() {
 
 #[tokio::test]
 async fn test_post_mass_query() {
+    let _lock = helper::NARINFO_LOCK.lock().await;
     let client = helper::client();
     client
         .put_nar_info(NARINFO, helper::uploader(), narinfo_fixture(NARINFO))
@@ -139,6 +141,7 @@ async fn test_get_nar_not_found() {
 
 #[tokio::test]
 async fn test_served_content_types() {
+    let _lock = helper::NARINFO_LOCK.lock().await;
     // What Nix and nix-serve use. The client doesn't return headers.
     let client = helper::client();
     client
@@ -239,15 +242,15 @@ async fn test_put_rejects_bad_credentials() {
 
 #[tokio::test]
 async fn test_healthz() {
-    let body = helper::client()
-        .get_healthz()
-        .await
-        .expect("the request failed");
-    assert_eq!(body, "ok");
+    // Not in the spec, so the client has no method for it.
+    let resp = helper::get("healthz").await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.expect("the body failed"), "ok");
 }
 
 #[tokio::test]
 async fn test_put_narinfo_keeps_unknown_fields() {
+    let _lock = helper::NARINFO_LOCK.lock().await;
     // Nix ignores keys it doesn't know; the Worker must not drop them either.
     let client = helper::client();
     let with_extra = format!(

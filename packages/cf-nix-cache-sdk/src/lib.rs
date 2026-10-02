@@ -11,10 +11,9 @@
 //!
 //! - **Types**: [`v1::Identity`], what `GET /v1/whoami` returns, and
 //!   [`v1::Error`], the body of every error.
-//! - **Server** (`server` feature): a trait per tag, `CacheApi`, `AuthApi` and
-//!   `HealthApi`, a response enum per operation, and `build_router`, an axum
-//!   router over all three that checks requests against the spec before they
-//!   reach a handler.
+//! - **Server** (`server` feature): a trait per tag, `CacheApi` and `AuthApi`,
+//!   a response enum per operation, and `build_router`, an axum router over
+//!   both that checks requests against the spec before they reach a handler.
 //! - **Client** (`client` feature): `HttpClient`, a method per operation.
 //!
 //! # Generated code

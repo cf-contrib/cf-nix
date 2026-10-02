@@ -1,5 +1,6 @@
 use cf_nix_cache_sdk::v1::HttpClient;
 use http_auth_basic::Credentials;
+use tokio::sync::Mutex;
 
 /// Where `wrangler dev` serves the Worker.
 pub const BASE_URL: &str = "http://127.0.0.1:8787";
@@ -50,3 +51,8 @@ pub async fn put(path: &str, content_type: &str, body: Vec<u8>) -> reqwest::Resp
         .await
         .expect("the request failed")
 }
+
+/// Held by every test that uploads the `j5m1…` narinfo. Tests run in
+/// parallel, and one's upload would replace what another is about to read
+/// back.
+pub static NARINFO_LOCK: Mutex<()> = Mutex::const_new(());

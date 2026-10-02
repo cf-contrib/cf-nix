@@ -15,7 +15,7 @@ use cf_nix_cache_sdk::v1::*;
 | Feature | What it adds |
 |---|---|
 | (none) | The types: `Identity`, what `GET /v1/whoami` returns, and `Error`, the body of every error. |
-| `server` | A trait per tag (`CacheApi`, `AuthApi`, `HealthApi`), a response enum per operation, and `build_router`, an axum router over all three that checks requests against the document before they reach a handler. |
+| `server` | A trait per tag (`CacheApi`, `AuthApi`), a response enum per operation, and `build_router`, an axum router over both that checks requests against the document before they reach a handler. |
 | `client` | `HttpClient`, a method per operation, over reqwest. |
 
 ## Calling the API

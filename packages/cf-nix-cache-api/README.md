@@ -135,7 +135,7 @@ must use the content type Nix sends: `text/x-nix-narinfo` for narinfo and
 | `HEAD` | `/nar/<hash>.nar` | public | Existence check for a NAR (200 / 404). |
 | `PUT` | `/nar/<hash>.nar` | basic | Upload a NAR archive. |
 | `GET` | `/v1/whoami` | basic | `{ kind, subject, rule? }`: the identity the credentials resolve to. |
-| `GET` | `/healthz` | public | `200` if the bindings and auth config are valid, else `500`. Never shows the config. |
+| `GET` | `/healthz` | public | `200` if the bindings and auth config are valid, else `500`. Never shows the config. A deployment check, so not in the OpenAPI document. |
 
 **Errors** are JSON, in the shape cf-oidc-auth uses: `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of a failed upload, so the message says what to fix, except for `500` and `502`, whose details go only to the logs.
 

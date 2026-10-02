@@ -17,7 +17,7 @@ worker-macros = { version = "0.8" }
 cf-nix-cache-sdk = { path = "../cf-nix-cache-sdk", features = ["server"] }
 # Named by the generated traits and router; the versions the SDK builds with.
 async-trait = "0.1"
-axum = { version = "0.8", default-features = false }
+axum = { version = "0.8", default-features = false, features = ["json"] }
 bytes = "1"
 tower-service = "0.3"
 
@@ -40,7 +40,7 @@ web-sys = { version = "0.3", features = ["Crypto", "CryptoKey", "SubtleCrypto", 
 # The integration tests call the Worker through the SDK's client.
 cf-nix-cache-sdk = { path = "../cf-nix-cache-sdk", features = ["client"] }
 reqwest = "0.13.4"
-tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "sync"] }
 
 [features]
 # Opt-in integration tests which require `wrangler dev` running locally.

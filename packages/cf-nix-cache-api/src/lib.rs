@@ -3,6 +3,11 @@ use std::fmt::Write;
 mod auth;
 mod model;
 
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{IntoResponse, Response as HttpResponse},
+};
 use cf_nix_cache_sdk::v1::{self, ErrorCode};
 use model::{NarInfo, NarInfoContext, NarInfoSigKey, Validate, append_sig};
 use tower_service::Service;
@@ -12,18 +17,18 @@ use worker::{send::SendFuture, *};
 const BUCKET: &str = "CF_NIX_WORKER_BUCKET";
 
 #[event(fetch)]
-async fn fetch(
-    req: HttpRequest,
-    env: Env,
-    _ctx: Context,
-) -> Result<axum::http::Response<axum::body::Body>> {
+async fn fetch(req: HttpRequest, env: Env, _ctx: Context) -> Result<HttpResponse> {
     // The router checks each request against the spec before it reaches a
     // handler. Reads are public; every upload resolves to an identity in its
     // handler, from the Authorization header the spec hands it.
-    let cache = Cache { env };
-    Ok(v1::build_router(cache.clone(), cache.clone(), cache)
-        .call(req)
-        .await?)
+    let cache = Cache { env: env.clone() };
+    let mut router = v1::build_router(cache.clone(), cache)
+        // Not in the spec: it's for whoever deploys the Worker, not its clients.
+        .route(
+            "/healthz",
+            axum::routing::get(move || SendFuture::new(get_healthz(env))),
+        );
+    Ok(router.call(req).await?)
 }
 
 /// The Worker's implementation of the API, over its bindings.
@@ -39,13 +44,6 @@ struct Cache {
 impl v1::AuthApi for Cache {
     async fn get_whoami(&self, authorization: Option<String>) -> v1::GetWhoamiResponse {
         SendFuture::new(get_whoami(&self.env, authorization)).await
-    }
-}
-
-#[async_trait::async_trait]
-impl v1::HealthApi for Cache {
-    async fn get_healthz(&self) -> v1::GetHealthzResponse {
-        SendFuture::new(get_healthz(&self.env)).await
     }
 }
 
@@ -133,15 +131,16 @@ async fn get_whoami(env: &Env, authorization: Option<String>) -> v1::GetWhoamiRe
 ///
 /// `200` when the bucket binding, the auth config and the signing key (if
 /// bound) are valid, else `500`. Never shows the config: the reason is logged.
-async fn get_healthz(env: &Env) -> v1::GetHealthzResponse {
-    match check_health(env).await {
-        Ok(()) => v1::GetHealthzResponse::Ok("ok".to_string()),
+async fn get_healthz(env: Env) -> HttpResponse {
+    match check_health(&env).await {
+        Ok(()) => "ok".into_response(),
         Err(reason) => {
             console_error!("unhealthy: {reason}");
-            v1::GetHealthzResponse::InternalServerError(error(
+            let body = error(
                 ErrorCode::Misconfigured,
                 "the Worker's bindings or config are invalid; its logs have the reason",
-            ))
+            );
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
         }
     }
 }

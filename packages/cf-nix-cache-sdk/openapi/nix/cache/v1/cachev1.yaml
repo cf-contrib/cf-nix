@@ -19,8 +19,6 @@ tags:
     description: The Nix binary cache protocol.
   - name: auth
     description: Credential checks.
-  - name: health
-    description: Deployment checks.
 
 paths:
   /nix-cache-info:
@@ -63,7 +61,12 @@ paths:
 
   /{hash}.narinfo:
     parameters:
-      - $ref: "#/components/parameters/StorePathHash"
+      - name: hash
+        in: path
+        required: true
+        description: The hash part of a store path.
+        schema:
+          type: string
     head:
       operationId: headNarInfo
       tags: [cache]
@@ -128,7 +131,12 @@ paths:
 
   /nar/{hash}.nar:
     parameters:
-      - $ref: "#/components/parameters/FileHash"
+      - name: hash
+        in: path
+        required: true
+        description: The NAR's file hash, from the narinfo's `URL`.
+        schema:
+          type: string
     head:
       operationId: headNar
       tags: [cache]
@@ -217,24 +225,6 @@ paths:
         "502":
           $ref: "#/components/responses/BadGateway"
 
-  /healthz:
-    get:
-      operationId: getHealthz
-      tags: [health]
-      summary: Check the deployment
-      description: |
-        `200` when the bucket binding, the auth config and the signing key (if
-        bound) are valid. Never shows the config: the reason is logged.
-      responses:
-        "200":
-          description: The Worker is configured.
-          content:
-            text/plain:
-              schema:
-                type: string
-        "500":
-          $ref: "#/components/responses/InternalServerError"
-
 components:
   securitySchemes:
     basic:
@@ -245,20 +235,6 @@ components:
         Actions OIDC token.
 
   parameters:
-    StorePathHash:
-      name: hash
-      in: path
-      required: true
-      description: The hash part of a store path.
-      schema:
-        type: string
-    FileHash:
-      name: hash
-      in: path
-      required: true
-      description: The NAR's file hash, from the narinfo's `URL`.
-      schema:
-        type: string
     # Declared as a parameter, not only as `security`, so the server is handed
     # the header to authorize with.
     Authorization:
