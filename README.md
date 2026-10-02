@@ -10,7 +10,7 @@
 [![Nix Flake](https://img.shields.io/badge/Nix-Flake-5277C3?logo=nixos&logoColor=white)](https://nixos.wiki/wiki/Flakes)
 [![License: MIT](https://img.shields.io/github/license/cf-contrib/cf-nix-cache)](LICENSE)
 
-> [!NOTE]
+> [!WARNING]
 > **Pre-1.0.** The Worker's bindings and the module's inputs may still change
 > between minor versions.
 

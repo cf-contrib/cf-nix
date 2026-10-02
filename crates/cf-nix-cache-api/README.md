@@ -84,15 +84,16 @@ anywhere else is refused. `*_id` claims must match exactly. A claim missing
 from the token never matches, a list claim (`groups`) matches if any entry
 does, and numbers and booleans compare as written (`"email_verified": "true"`).
 
-**Pin your tenant.** Some issuers give a token for any audience to anyone's
-projects: GitHub Actions to every repository on github.com, GitLab.com and
-Terraform Cloud likewise. For one of those, put your tenant's ID in every claim
-set (`repository_owner_id` for GitHub Actions, `namespace_id` or `project_id`
-for GitLab, `terraform_organization_id` for Terraform Cloud), or any project on
-the issuer can upload. The Worker doesn't know which issuers these are: the
-claim sets are the whole policy. Issuers that only give tokens to people who
-passed your policy, like Cloudflare Access or a cf-oidc-auth broker, need no
-pin.
+> [!WARNING]
+> **Pin your tenant.** Some issuers give a token for any audience to anyone's
+> projects: GitHub Actions to every repository on github.com, GitLab.com and
+> Terraform Cloud likewise. For one of those, put your tenant's ID in every claim
+> set (`repository_owner_id` for GitHub Actions, `namespace_id` or `project_id`
+> for GitLab, `terraform_organization_id` for Terraform Cloud), or any project on
+> the issuer can upload. The Worker doesn't know which issuers these are: the
+> claim sets are the whole policy. Issuers that only give tokens to people who
+> passed your policy, like Cloudflare Access or a cf-oidc-auth broker, need no
+> pin.
 
 The config is checked when an upload reads it. An invalid one fails closed:
 the upload gets `500`, and the reason is logged. Every upload
