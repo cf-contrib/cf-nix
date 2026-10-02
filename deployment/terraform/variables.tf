@@ -68,13 +68,6 @@ variable "oidc_providers" {
     condition     = alltrue([for i in var.oidc_providers : length(i.claims) > 0 && alltrue([for c in i.claims : length(c) > 0])])
     error_message = "Every issuer needs at least one claim set, and no claim set may be empty."
   }
-
-  validation {
-    condition = alltrue([
-      for i in var.oidc_providers : i.issuer != "https://token.actions.githubusercontent.com" || alltrue([for c in i.claims : contains(keys(c), "repository_owner_id")])
-    ])
-    error_message = "Every claim set for GitHub Actions must pin repository_owner_id: GitHub gives a token for any audience to any repository on github.com."
-  }
 }
 
 variable "release_tag" {

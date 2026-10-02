@@ -17,7 +17,8 @@ module "cf_nix_cache" {
   # Who may upload: OIDC tokens from these providers that match a claim set.
   oidc_providers = [{
     # GitHub Actions jobs in this org's repo, on main. The audience defaults
-    # to the cache URL.
+    # to the cache URL. GitHub gives tokens to every repository on github.com,
+    # so pin your org in every claim set.
     issuer = "https://token.actions.githubusercontent.com"
     claims = [{
       repository_owner_id = "100000001" # gh api orgs/<org> --jq .id
