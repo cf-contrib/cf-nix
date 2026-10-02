@@ -21,7 +21,7 @@ for a GitHub Actions OIDC token.
    gh api orgs/<org> --jq .id           # github_owner_id
    gh api repos/<org>/<repo> --jq .id   # repository_id in a rule
    ```
-3. **Deploy** the released bundle with the [Terraform / OpenTofu module](terraform) (`//packages/cf-nix-worker/terraform?ref=<version>`). It downloads the release (`index.js` and `index_bg.wasm`, both required), creates the R2 bucket, and sets up the bindings below and the workers.dev URL (or an optional custom domain). To deploy a local build instead, run `worker-build --release` here and point the module's `bundle_dir` at `build/`.
+3. **Deploy** the released bundle with the [Terraform / OpenTofu module](../../deployment/terraform) (`//deployment/terraform?ref=<version>`). It downloads the release (`index.js` and `index_bg.wasm`, both required), creates the R2 bucket, and sets up the bindings below and the workers.dev URL (or an optional custom domain). To deploy a local build instead, run `worker-build --release` here and point the module's `bundle_dir` at this directory's `build/`.
 4. **Check** that `<cache-url>/healthz` returns `200`. A `500` means the auth config is invalid, the bucket isn't bound, or the signing key can't be read or parsed; the reason is in Workers Logs.
 
 `wrangler.toml` in this directory is for local development, not production.
@@ -111,12 +111,18 @@ audience must equal `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE` (a trailing `/` is
 ignored). The audience can't be GitHub's default `https://github.com/<owner>`,
 so a token requested for AWS or GCP doesn't work here.
 
-In a workflow, the [action](../cf-nix-action) sets this up: it gets the job's
+In a workflow, the [action](../../action) sets this up: it gets the job's
 OIDC token, checks it against `/v1/whoami`, points Nix at a netrc file holding
 it, and refreshes it every 4 minutes. GitHub OIDC tokens expire after 5 minutes,
 and Nix reads the netrc again for every request, so long uploads keep working.
 
 ## HTTP API
+
+The API is specified by the SDK's [OpenAPI document](../cf-nix-cache-sdk/openapi/nix/cache/v1/cachev1.yaml).
+The Worker implements the server [generated from it](../cf-nix-cache-sdk), so
+requests are checked against the document before a handler sees them. Uploads
+must use the content type Nix sends: `text/x-nix-narinfo` for narinfo and
+`application/x-nix-nar` for NARs.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -129,7 +135,7 @@ and Nix reads the netrc again for every request, so long uploads keep working.
 | `HEAD` | `/nar/<hash>.nar` | public | Existence check for a NAR (200 / 404). |
 | `PUT` | `/nar/<hash>.nar` | basic | Upload a NAR archive. |
 | `GET` | `/v1/whoami` | basic | `{ kind, subject, rule? }`: the identity the credentials resolve to. |
-| `GET` | `/healthz` | public | `200` if the bindings and auth config are valid, else `500`. Never shows the config. |
+| `GET` | `/healthz` | public | `200` if the bindings and auth config are valid, else `500`. Never shows the config. A deployment check, so not in the OpenAPI document. |
 
 **Errors** are JSON, in the shape cf-oidc-auth uses: `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of a failed upload, so the message says what to fix, except for `500` and `502`, whose details go only to the logs.
 
@@ -142,6 +148,10 @@ and Nix reads the netrc again for every request, so long uploads keep working.
 | `500` | `misconfigured` | The auth config, the bindings or the signing key are invalid |
 | `500` | `internal_error` | A stored object is unreadable |
 | `502` | `upstream_error` | The GitHub API or GitHub's signing keys couldn't be reached |
+
+A request the document doesn't allow is rejected before it reaches the Worker,
+as `application/problem+json` with a `code`: `415` for an undeclared content
+type, `413` for a body over 64 MiB, `400` or `422` for a malformed request.
 
 **Validation and signing:** the Worker parses each uploaded narinfo, checks its
 format, and requires its `StorePath` to match the request's hash. Every stored
@@ -168,12 +178,15 @@ is set, the Worker signs the upload itself. Otherwise the `PUT` returns `400`.
   check's cache).
 - Compressed NARs (`.nar.xz` etc.) aren't supported: uploads must use
   `?compression=none`.
+- NARs are held in memory on the way in and out, and an upload can be at most
+  64 MiB (`413`). A Worker has 128 MB of memory.
 - Secrets Store is in open beta.
 
 ## Development
 
-The crate is a member of the Cargo workspace at the repo root. Run everything
-inside the dev shell:
+The crate is a member of the Cargo workspace at the repo root. It builds the
+SDK, which generates the API from its OpenAPI document, so a change to the
+document shows up as a compile error here. Run everything inside the dev shell:
 
 ```bash
 nix develop -c cargo test           # unit tests, from the repo root
@@ -181,7 +194,7 @@ nix develop -c worker-build --dev   # build the bundle into ./build (this direct
 nix develop -c wrangler dev         # serve locally (this directory)
 ```
 
-The integration tests run against `wrangler dev`. Uploads need a GitHub token
+The integration tests call `wrangler dev` through the SDK's client. Uploads need a GitHub token
 with push access to the `CF_NIX_WORKER_GITHUB_REPOSITORY` in `wrangler.toml`:
 
 ```bash
@@ -190,8 +203,8 @@ CF_NIX_WORKER_GITHUB_TOKEN=$(gh auth token) nix develop -c cargo test --features
 
 ## Dependencies
 
-- [`worker`](https://crates.io/crates/worker) and [`worker-macros`](https://crates.io/crates/worker-macros), the Cloudflare Workers Rust SDK
-- [`narinfo`](https://crates.io/crates/narinfo) for parsing and serializing `.narinfo`
+- [`cf-nix-cache-sdk`](../cf-nix-cache-sdk), the API's types and the server traits the Worker implements
+- [`worker`](https://crates.io/crates/worker) and [`worker-macros`](https://crates.io/crates/worker-macros), the Cloudflare Workers Rust SDK, with [`axum`](https://crates.io/crates/axum), which serves the SDK's router
 - [`http-auth-basic`](https://crates.io/crates/http-auth-basic) for the auth header
 - [`serde`](https://crates.io/crates/serde) and [`serde_json`](https://crates.io/crates/serde_json) for OIDC claims, rules and GitHub API responses
 - [`web-sys`](https://crates.io/crates/web-sys) for WebCrypto, which verifies OIDC token signatures

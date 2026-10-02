@@ -1,10 +1,10 @@
 use std::fmt;
 
+use cf_nix_cache_sdk::v1::{self, ErrorCode};
 use http_auth_basic::Credentials;
-use serde::Serialize;
-use worker::{Env, Request, Response, Result, console_error};
+use worker::{Env, console_error};
 
-use crate::error_response;
+use crate::error;
 
 mod cache;
 mod github;
@@ -12,19 +12,18 @@ mod oidc;
 
 /// The identity an authorized request was resolved to.
 ///
-/// Returned by `GET /v1/whoami` and logged for every upload.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+/// Returned by `GET /v1/whoami`, as a [`v1::Identity`], and logged for every
+/// upload.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Identity {
     pub kind: IdentityKind,
     /// GitHub login (`users`) or the OIDC `sub` claim (`actions`).
     pub subject: String,
     /// Index of the matching `CF_NIX_WORKER_GITHUB_OIDC_RULES` entry (`actions` only).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub rule: Option<usize>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum IdentityKind {
     /// A person, with their GitHub user token.
     Users,
@@ -46,6 +45,21 @@ impl fmt::Display for Identity {
     }
 }
 
+impl From<Identity> for v1::Identity {
+    fn from(identity: Identity) -> Self {
+        Self {
+            kind: match identity.kind {
+                IdentityKind::Users => v1::IdentityKind::Users,
+                IdentityKind::Actions => v1::IdentityKind::Actions,
+            },
+            subject: identity.subject,
+            // There are never 2^32 rules: the var would be far over the size
+            // Cloudflare allows.
+            rule: identity.rule.map(|rule| rule as u32),
+        }
+    }
+}
+
 /// Why a request was not authorized.
 #[derive(Clone, Debug, PartialEq)]
 pub enum AuthError {
@@ -59,24 +73,39 @@ pub enum AuthError {
     Upstream(String),
 }
 
-impl AuthError {
-    /// Converts the error into a response. Config and upstream details are
-    /// logged, not returned.
-    pub fn into_response(self) -> Result<Response> {
-        match self {
-            AuthError::Unauthorized(msg) => error_response(401, "unauthorized", &msg),
-            AuthError::Forbidden(msg) => error_response(403, "forbidden", &msg),
-            AuthError::Config(msg) => {
-                console_error!("auth config invalid: {msg}");
-                error_response(500, "misconfigured", "auth is misconfigured")
-            }
-            AuthError::Upstream(msg) => {
-                console_error!("auth upstream failure: {msg}");
-                error_response(502, "upstream_error", "GitHub couldn't be reached")
+/// Converts the error into the response of each operation that authorizes,
+/// which share these four. Config and upstream details are logged, not
+/// returned.
+macro_rules! impl_from_auth_error {
+    ($($response:ident),*) => {$(
+        impl From<AuthError> for v1::$response {
+            fn from(err: AuthError) -> Self {
+                match err {
+                    AuthError::Unauthorized(msg) => {
+                        Self::Unauthorized(error(ErrorCode::Unauthorized, msg))
+                    }
+                    AuthError::Forbidden(msg) => Self::Forbidden(error(ErrorCode::Forbidden, msg)),
+                    AuthError::Config(msg) => {
+                        console_error!("auth config invalid: {msg}");
+                        Self::InternalServerError(error(
+                            ErrorCode::Misconfigured,
+                            "auth is misconfigured",
+                        ))
+                    }
+                    AuthError::Upstream(msg) => {
+                        console_error!("auth upstream failure: {msg}");
+                        Self::BadGateway(error(
+                            ErrorCode::UpstreamError,
+                            "GitHub couldn't be reached",
+                        ))
+                    }
+                }
             }
         }
-    }
+    )*};
 }
+
+impl_from_auth_error!(GetWhoamiResponse, PutNarInfoResponse, PutNarResponse);
 
 /// Auth configuration read from the Worker's vars and secrets.
 ///
@@ -166,13 +195,15 @@ pub fn check_config(env: &Env) -> std::result::Result<(), String> {
     }
 }
 
-/// Resolves the request's HTTP Basic credentials to an identity allowed to
-/// upload.
-pub async fn authorize(req: &Request, env: &Env) -> std::result::Result<Identity, AuthError> {
+/// Resolves a request's HTTP Basic credentials, its `Authorization` header,
+/// to an identity allowed to upload.
+pub async fn authorize(
+    header: Option<&str>,
+    env: &Env,
+) -> std::result::Result<Identity, AuthError> {
     let config = Config::from_env(env)?;
-    let header = req.headers().get("Authorization").unwrap_or_default();
 
-    match Credential::parse(header.as_deref())? {
+    match Credential::parse(header)? {
         Credential::Users(token) => {
             let Some(config) = config.github else {
                 return Err(AuthError::Unauthorized(
@@ -284,11 +315,11 @@ mod tests {
 
     #[test]
     fn identity_serializes_for_whoami() {
-        let identity = Identity {
+        let identity = v1::Identity::from(Identity {
             kind: IdentityKind::Actions,
             subject: "repo:example-org/app:ref:refs/heads/main".to_string(),
             rule: Some(0),
-        };
+        });
         assert_eq!(
             serde_json::to_value(&identity).unwrap(),
             serde_json::json!({

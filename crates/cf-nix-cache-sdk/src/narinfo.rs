@@ -1,6 +1,13 @@
-use base64::{engine::general_purpose::STANDARD, Engine};
-use ed25519_dalek::{Signature, Signer, SigningKey as DalekSigningKey};
+//! The `.narinfo` format: parsing it the way Nix does, checking it the way the
+//! Worker does before it stores an upload, and (with the `signing` feature)
+//! signing it the way Nix does.
+//!
+//! Errors are messages for the uploader: Nix prints the body of a failed
+//! upload, and the Worker puts them there.
 
+use base64::{Engine, engine::general_purpose::STANDARD};
+#[cfg(feature = "signing")]
+use ed25519_dalek::{Signature, Signer, SigningKey as DalekSigningKey};
 
 /// A parsed `.narinfo`, borrowing from its text.
 ///
@@ -89,9 +96,9 @@ pub fn append_sig(text: &str, sig: &str) -> String {
 
 /// Parsed Nix signing secret used to produce `.narinfo` `Sig:` entries.
 ///
-/// This corresponds to `CF_NIX_WORKER_SECRET` in the form `<key-name>:<base64>`,
-/// where the base64 decodes to 64 Ed25519 key bytes (secret + public) as emitted
-/// by `nix key generate-secret`.
+/// The form is `<key-name>:<base64>`, where the base64 decodes to 64 Ed25519
+/// key bytes (secret + public), as emitted by `nix key generate-secret`.
+#[cfg(feature = "signing")]
 pub struct NarInfoSigKey {
     /// Nix signing key name (e.g. `cache.example.org-1`).
     pub key_name: String,
@@ -99,28 +106,29 @@ pub struct NarInfoSigKey {
     pub secret_key_b64: String,
 }
 
+#[cfg(feature = "signing")]
 impl NarInfoSigKey {
     pub fn parse(secret: &str) -> Result<Self, String> {
         // Format:
         //   <key-name>:<base64>
         // where <base64> is 64 bytes (secret + public) for Ed25519.
-        let (key_name, b64) = secret.split_once(':').ok_or_else(|| {
-            "CF_NIX_WORKER_SECRET must be in the format <key-name>:<base64>".to_string()
-        })?;
+        let (key_name, b64) = secret
+            .split_once(':')
+            .ok_or_else(|| "signing key must be in the format <key-name>:<base64>".to_string())?;
 
         let key_name = key_name.trim();
         let b64 = b64.trim();
 
         if key_name.is_empty() {
-            return Err("CF_NIX_WORKER_SECRET key name must not be empty".to_string());
+            return Err("signing key name must not be empty".to_string());
         }
 
         let decoded = STANDARD
             .decode(b64)
-            .map_err(|_| "CF_NIX_WORKER_SECRET must contain valid base64 key bytes".to_string())?;
+            .map_err(|_| "signing key must contain valid base64 key bytes".to_string())?;
 
         if decoded.len() != 64 {
-            return Err("CF_NIX_WORKER_SECRET base64 must decode to 64 bytes".to_string());
+            return Err("signing key base64 must decode to 64 bytes".to_string());
         }
 
         Ok(Self {
@@ -159,7 +167,8 @@ impl NarInfoSigKey {
 
 /// Context for validating a narinfo upload.
 ///
-/// `hash` is taken from the request route param (without `.narinfo`).
+/// `hash` is the store path hash the narinfo is uploaded under: the route's
+/// `/<hash>.narinfo`.
 pub struct NarInfoContext {
     pub hash: String,
 }
@@ -230,10 +239,10 @@ impl Validate for NarInfo<'_> {
         // Optional fields
         // Deriver is the *basename* of the .drv (path relative to /nix/store),
         // not a full store path. See the cache.nixos.org narinfo format.
-        if let Some(deriver) = self.deriver {
-            if !deriver.ends_with(".drv") || deriver.contains('/') {
-                return Err("Deriver must be a basename ending in .drv".to_string());
-            }
+        if let Some(deriver) = self.deriver
+            && (!deriver.ends_with(".drv") || deriver.contains('/'))
+        {
+            return Err("Deriver must be a basename ending in .drv".to_string());
         }
 
         if let Some(compression) = self.compression {
@@ -247,10 +256,8 @@ impl Validate for NarInfo<'_> {
             validate_sha256_hash_field("FileHash", file_hash)?;
         }
 
-        if let Some(file_size) = self.file_size {
-            if file_size == 0 {
-                return Err("FileSize must be a positive integer".to_string());
-            }
+        if self.file_size == Some(0) {
+            return Err("FileSize must be a positive integer".to_string());
         }
 
         // Content-addressed paths (`nix store add`, fixed-output derivation
@@ -299,6 +306,7 @@ fn is_store_path_basename(name: &str) -> bool {
 
 const NIX32_ALPHABET: &[u8; 32] = b"0123456789abcdfghijklmnpqrsvwxyz";
 
+#[cfg(feature = "signing")]
 fn narinfo_fingerprint(info: &NarInfo<'_>) -> Result<String, String> {
     // NarHash must be sha256:<nix32> to match Nix's fingerprinting.
     let nar_hash_nix32 = nar_hash_to_nix32(info.nar_hash)?;
@@ -317,6 +325,7 @@ fn narinfo_fingerprint(info: &NarInfo<'_>) -> Result<String, String> {
     ))
 }
 
+#[cfg(feature = "signing")]
 fn nar_hash_to_nix32(value: &str) -> Result<String, String> {
     // Accept sha256:<base32|base64> or sha256-<base64>
     let (prefix, hash) = if let Some((prefix, hash)) = value.split_once(':') {
@@ -353,6 +362,7 @@ fn nar_hash_to_nix32(value: &str) -> Result<String, String> {
     Ok(format!("sha256:{}", encode_nix32(&bytes)))
 }
 
+#[cfg(feature = "signing")]
 fn encode_nix32(bytes: &[u8]) -> String {
     if bytes.is_empty() {
         return String::new();
@@ -427,11 +437,15 @@ fn validate_sha256_hash_field(field: &str, value: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    const TEST_KEY: &str = "cache.example.org-1:wpzRsj2Xn0OiTVS0kP0L0ecJ9tuFNH6qKlGmOb8+a51litiFcHAAMHXGekNc4Br0X6r2mF4k/eqDITsD7hSJXA==";
+    /// The public half of the key Nix signed the fixtures below with. The
+    /// secret half isn't needed: a fingerprint that Nix's signature verifies
+    /// against is the one Nix signs.
+    #[cfg(feature = "signing")]
+    const NIX_PUBLIC_KEY: &str = "ZYrYhXBwADB1xnpDXOAa9F+q9pheJP3qgyE7A+4UiVw=";
 
     /// Written and signed by Nix itself (`nix copy --to
-    /// 'file://…?compression=none&secret-key=…'` with TEST_KEY), so the
-    /// signature is the ground truth for a path with references.
+    /// 'file://…?compression=none&secret-key=…'`), so the signature is the
+    /// ground truth for a path with references.
     const NIX_SIGNED: &str = "\
 StorePath: /nix/store/mgc3m5ad39b84vkdrca6zd9jan5a28c2-hello-2.12.3
 URL: nar/0139403halzgnamd4wcc0j80yd06sf1wb0gjn4xswh855nvrwgd6.nar
@@ -443,6 +457,7 @@ NarSize: 113096
 References: ls125wfdax9gk2ryq7fgzrncpi6x5v2s-libiconv-115.100.1
 Deriver: lhbc5cbhqmaq5mq5171lxhkr1qf0mkbr-hello-2.12.3.drv
 ";
+    #[cfg(feature = "signing")]
     const NIX_SIG: &str =
         "Asy0nOGVV5q3qTjAICHgn7g7Xdm8fxYPv90mmG1LhBdmgFwr8PH9nSoYNNHgCthL34dgBdnLAorV/4cJzJoiCg==";
 
@@ -460,6 +475,7 @@ References:
 CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
 ";
     const NIX_CA: &str = "fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq";
+    #[cfg(feature = "signing")]
     const NIX_CA_SIG: &str =
         "qNaG672O6KwKQkp4RZ6aG1jFsCyi7DsOmZtuwvHgMXuXFUpo0cBKBsGQFL2qLM6oW+9vN/Xk2/NpYle7sdq7BA==";
 
@@ -568,35 +584,57 @@ CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
         assert!(err.contains("sha256-<base64>"));
     }
 
-    #[test]
-    fn signing_key_parses_name_and_secret() {
-        let key = NarInfoSigKey::parse(
-            TEST_KEY,
-        )
-        .expect("key should parse");
+    /// A made-up signing key, as `nix key generate-secret` prints it, and its
+    /// public half.
+    #[cfg(feature = "signing")]
+    fn made_up_key() -> (String, ed25519_dalek::VerifyingKey) {
+        let key = DalekSigningKey::from_bytes(&[7; 32]);
+        let secret = format!("test-1:{}", STANDARD.encode(key.to_keypair_bytes()));
+        (secret, key.verifying_key())
+    }
 
-        assert_eq!(key.key_name, "cache.example.org-1");
+    /// Checks `sig`, a `Sig:` value's base64, against the fingerprint of `info`.
+    #[cfg(feature = "signing")]
+    fn verify(info: &NarInfo<'_>, public_key: &ed25519_dalek::VerifyingKey, sig: &str) {
+        let sig = STANDARD.decode(sig).expect("signature should be base64");
+        let sig = Signature::from_slice(&sig).expect("signature should be 64 bytes");
+        let fingerprint = narinfo_fingerprint(info).expect("fingerprint");
+        public_key
+            .verify_strict(fingerprint.as_bytes(), &sig)
+            .expect("signature should verify");
+    }
+
+    #[cfg(feature = "signing")]
+    fn nix_public_key() -> ed25519_dalek::VerifyingKey {
+        let bytes: [u8; 32] = STANDARD.decode(NIX_PUBLIC_KEY).unwrap().try_into().unwrap();
+        ed25519_dalek::VerifyingKey::from_bytes(&bytes).unwrap()
+    }
+
+    #[test]
+    #[cfg(feature = "signing")]
+    fn signing_key_parses_name_and_secret() {
+        let (secret, _) = made_up_key();
+        let key = NarInfoSigKey::parse(&secret).expect("key should parse");
+
+        assert_eq!(key.key_name, "test-1");
         assert_eq!(
-            key.secret_key_b64,
-            "wpzRsj2Xn0OiTVS0kP0L0ecJ9tuFNH6qKlGmOb8+a51litiFcHAAMHXGekNc4Br0X6r2mF4k/eqDITsD7hSJXA=="
+            Some(key.secret_key_b64.as_str()),
+            secret.strip_prefix("test-1:")
         );
     }
 
     #[test]
-    fn sign_produces_sig_field() {
+    #[cfg(feature = "signing")]
+    fn sign_produces_a_sig_the_public_key_verifies() {
         let info = narinfo();
-        let key = NarInfoSigKey::parse(
-            TEST_KEY,
-        )
-        .expect("key should parse");
+        let (secret, public_key) = made_up_key();
+        let key = NarInfoSigKey::parse(&secret).expect("key should parse");
 
         let sig = key.sign(&info).expect("should sign");
 
         let (key_name, sig) = sig.split_once(':').expect("Sig is <key-name>:<base64>");
-        assert_eq!(key_name, "cache.example.org-1");
-        // Ed25519 signature is 64 bytes.
-        let decoded = STANDARD.decode(sig).expect("signature should be base64");
-        assert_eq!(decoded.len(), 64);
+        assert_eq!(key_name, "test-1");
+        verify(&info, &public_key, sig);
     }
 
     #[test]
@@ -628,11 +666,10 @@ CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
     }
 
     #[test]
-    fn sign_matches_nix_for_a_path_with_references() {
+    #[cfg(feature = "signing")]
+    fn fingerprint_matches_nix_for_a_path_with_references() {
         let info = NarInfo::parse(NIX_SIGNED).expect("NarInfo should parse");
-        let key = NarInfoSigKey::parse(TEST_KEY).expect("key should parse");
-        let sig = key.sign(&info).expect("should sign");
-        assert_eq!(sig, format!("cache.example.org-1:{NIX_SIG}"));
+        verify(&info, &nix_public_key(), NIX_SIG);
     }
 
     #[test]
@@ -676,13 +713,11 @@ CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
     }
 
     #[test]
-    fn sign_matches_nix_for_a_content_addressed_path() {
+    #[cfg(feature = "signing")]
+    fn fingerprint_matches_nix_for_a_content_addressed_path() {
         let info = NarInfo::parse(NIX_SIGNED_CA).expect("NarInfo should parse");
-        let key = NarInfoSigKey::parse(TEST_KEY).expect("key should parse");
-        let sig = key.sign(&info).expect("should sign");
-        assert_eq!(sig, format!("cache.example.org-1:{NIX_CA_SIG}"));
+        verify(&info, &nix_public_key(), NIX_CA_SIG);
     }
-
 
     /// Written by Nix for a path with a reference and a deriver.
     const PARSE_WITH_REFERENCES: &str = "\

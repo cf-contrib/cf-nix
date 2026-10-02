@@ -1,0 +1,329 @@
+openapi: 3.1.0
+info:
+  title: cf-nix-cache
+  description: |
+    A Nix binary cache on Cloudflare Workers and R2. Reads are public. Uploads
+    need HTTP Basic credentials, and the username picks how the Worker checks
+    the password: `users` for a person's GitHub token, `actions` for a GitHub
+    Actions OIDC token.
+
+    Errors are JSON, in the shape cf-oidc-auth uses. A request that doesn't fit
+    this document (a body over the size limit, the wrong content type) is
+    rejected before it reaches the Worker, as `application/problem+json`.
+  version: 0.4.0 # x-release-please-version
+  license:
+    name: MIT
+
+tags:
+  - name: cache
+    description: The Nix binary cache protocol.
+  - name: auth
+    description: Credential checks.
+
+paths:
+  /nix-cache-info:
+    get:
+      operationId: getNixCacheInfo
+      tags: [cache]
+      summary: Cache metadata
+      description: The store directory, priority and mass-query support, in the format Nix reads.
+      responses:
+        "200":
+          description: The cache's metadata.
+          content:
+            text/x-nix-cache-info:
+              schema:
+                type: string
+
+  /:
+    post:
+      operationId: postMassQuery
+      tags: [cache]
+      summary: Mass query
+      description: |
+        Takes a newline-separated list of store path hashes and returns the
+        ones that are in the cache, so a client can check many at once.
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: The cached subset of the hashes, one per line.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /{hash}.narinfo:
+    parameters:
+      - name: hash
+        in: path
+        required: true
+        description: The hash part of a store path.
+        schema:
+          type: string
+    head:
+      operationId: headNarInfo
+      tags: [cache]
+      summary: Check for a narinfo
+      description: Lets an uploader skip store paths the cache already has.
+      responses:
+        "200":
+          description: The narinfo exists.
+        "404":
+          description: No such narinfo.
+        "500":
+          description: The bucket couldn't be read.
+    get:
+      operationId: getNarInfo
+      tags: [cache]
+      summary: Get a narinfo
+      description: |
+        The narinfo for a store path, as it was uploaded, with a `Sig:` line if
+        the Worker signed it.
+      responses:
+        "200":
+          description: The narinfo.
+          content:
+            text/x-nix-narinfo:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+    put:
+      operationId: putNarInfo
+      tags: [cache]
+      summary: Upload a narinfo
+      description: |
+        Parses and validates the narinfo, and requires its `StorePath` to match
+        the hash. It is stored as sent. If it has no `Sig:`, the Worker signs it
+        with `CF_NIX_WORKER_SECRET`, and rejects it when no key is set.
+      security:
+        - basic: []
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+      requestBody:
+        required: true
+        content:
+          text/x-nix-narinfo:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: The narinfo was stored.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /nar/{hash}.nar:
+    parameters:
+      - name: hash
+        in: path
+        required: true
+        description: The NAR's file hash, from the narinfo's `URL`.
+        schema:
+          type: string
+    head:
+      operationId: headNar
+      tags: [cache]
+      summary: Check for a NAR
+      description: Lets an uploader skip NARs the cache already has.
+      responses:
+        "200":
+          description: The NAR exists.
+        "404":
+          description: No such NAR.
+        "500":
+          description: The bucket couldn't be read.
+    get:
+      operationId: getNar
+      tags: [cache]
+      summary: Get a NAR
+      description: The NAR archive a narinfo's `URL` points at.
+      responses:
+        "200":
+          description: The NAR.
+          content:
+            application/x-nix-archive:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+    put:
+      operationId: putNar
+      tags: [cache]
+      summary: Upload a NAR
+      description: |
+        Stores a NAR archive. Compressed NARs aren't supported: upload with
+        `?compression=none`.
+      security:
+        - basic: []
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+      requestBody:
+        required: true
+        content:
+          # What Nix sends; it's served back as application/x-nix-archive.
+          application/x-nix-nar:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: The NAR was stored.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /v1/whoami:
+    get:
+      operationId: getWhoami
+      tags: [auth]
+      summary: Resolve credentials
+      description: |
+        Resolves the credentials the same way as an upload and returns the
+        identity, so a client can check its setup before a `nix copy`.
+      security:
+        - basic: []
+      parameters:
+        - $ref: "#/components/parameters/Authorization"
+      responses:
+        "200":
+          description: The identity the credentials resolve to.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Identity"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+components:
+  securitySchemes:
+    basic:
+      type: http
+      scheme: basic
+      description: |
+        Username `users` with a GitHub user token, or `actions` with a GitHub
+        Actions OIDC token.
+
+  parameters:
+    # Declared as a parameter, not only as `security`, so the server is handed
+    # the header to authorize with.
+    Authorization:
+      name: Authorization
+      in: header
+      required: false
+      description: "`Basic` credentials: see the `basic` security scheme."
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: The narinfo or request is invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing or invalid credentials, or a mechanism that isn't enabled.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Valid credentials without upload access.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: No such object.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalServerError:
+      description: |
+        The auth config, the bindings or the signing key are invalid
+        (`misconfigured`), or a stored object is unreadable (`internal_error`).
+        Details go only to the logs.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BadGateway:
+      description: The GitHub API or GitHub's signing keys couldn't be reached.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      description: An error, in the shape cf-oidc-auth uses.
+      required: [error, message]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorCode"
+        message:
+          type: string
+          description: What went wrong. Nix prints it when an upload fails.
+    ErrorCode:
+      type: string
+      enum:
+        - bad_request
+        - unauthorized
+        - forbidden
+        - not_found
+        - misconfigured
+        - internal_error
+        - upstream_error
+    Identity:
+      type: object
+      description: The identity a request's credentials resolve to.
+      required: [kind, subject]
+      properties:
+        kind:
+          $ref: "#/components/schemas/IdentityKind"
+        subject:
+          type: string
+          description: The GitHub login (`users`) or the OIDC `sub` claim (`actions`).
+        rule:
+          type: integer
+          format: uint32
+          description: Index of the matching `CF_NIX_WORKER_GITHUB_OIDC_RULES` entry (`actions` only).
+    IdentityKind:
+      type: string
+      description: |
+        `users` for a person with their GitHub user token, `actions` for a
+        GitHub Actions job with its OIDC token.
+      enum: [users, actions]

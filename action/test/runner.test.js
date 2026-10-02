@@ -8,7 +8,7 @@ import { after, before, describe, it } from "node:test";
 import { booleanInput, cacheURL, idToken, netrcEntry, nixConfig, whoami, write, writeNetrc } from "../src/runner.js";
 import { startStub } from "./stub.js";
 
-const dir = mkdtempSync(join(tmpdir(), "cf-nix-action-"));
+const dir = mkdtempSync(join(tmpdir(), "cf-nix-cache-"));
 
 describe("cacheURL", () => {
   it("accepts https and loopback http", () => {

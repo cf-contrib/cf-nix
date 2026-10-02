@@ -50,7 +50,7 @@ describe("action", () => {
 
   /** @param {Record<string, string>} inputs @param {Record<string, string>} [extra] */
   function env(inputs, extra = {}) {
-    const dir = mkdtempSync(join(tmpdir(), "cf-nix-action-"));
+    const dir = mkdtempSync(join(tmpdir(), "cf-nix-cache-"));
     const files = Object.fromEntries(
       ["GITHUB_ENV", "GITHUB_OUTPUT", "GITHUB_STATE"].map((name) => {
         const path = join(dir, name);

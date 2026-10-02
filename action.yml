@@ -22,5 +22,5 @@ outputs:
     description: Path of the netrc file, also set as netrc-file in NIX_CONFIG
 runs:
   using: node24
-  main: packages/cf-nix-action/src/main.js
-  post: packages/cf-nix-action/src/post.js
+  main: action/src/main.js
+  post: action/src/post.js
