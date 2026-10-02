@@ -17,9 +17,10 @@
 | | Ships as | What it is |
 |---|---|---|
 | [`crates/cf-nix-cache-api`](crates/cf-nix-cache-api) | `index.js` + `index_bg.wasm` in [Releases](https://github.com/cf-contrib/cf-nix-cache/releases) | The server, a Cloudflare Worker written in Rust. Serves narinfo and NARs from R2, validates and signs uploads, and authorizes uploaders by their OIDC token. |
+| [`crates/cf-nix-cache-sdk`](crates/cf-nix-cache-sdk) | A Rust crate in this workspace; not published | The HTTP API's [OpenAPI document](crates/cf-nix-cache-sdk/openapi/nix/cache/v1/cachev1.yaml), and the types, server traits and client generated from it; hand-written beside them, the narinfo format and the health endpoints. The Worker builds on it. |
 | [`deployment/terraform`](deployment/terraform) | `//deployment/terraform?ref=<version>` | Deploys the released Worker with its R2 bucket and bindings. |
 
-Both are released together from one tag.
+The Worker and the module are released together from one tag.
 
 ## How it works
 
@@ -111,11 +112,7 @@ nix develop -c cargo test                                   # the Worker's and t
 (cd deployment/terraform && nix develop -c sh -c "tofu init -backend=false && tofu test")   # the module's tests
 ```
 
-| Path | |
-|---|---|
-| [`crates/cf-nix-cache-api`](crates/cf-nix-cache-api#development) | The Worker: the server's handlers and upload auth. Its README covers the bundle, `wrangler dev` and the integration tests. |
-| [`crates/cf-nix-cache-sdk`](crates/cf-nix-cache-sdk#generated-code) | The HTTP API's [OpenAPI document](crates/cf-nix-cache-sdk/openapi/nix/cache/v1/cachev1.yaml), and the types, server traits and client `build.rs` generates from it, with the narinfo format. Not published; the Worker builds on it. |
-| [`deployment/terraform`](deployment/terraform#development) | The Terraform / OpenTofu module. |
+Each directory's README has the rest: the [Worker's](crates/cf-nix-cache-api#development) covers the bundle, `wrangler dev` and the integration tests; the [SDK's](crates/cf-nix-cache-sdk#generated-code) how its code is generated; and the [module's](deployment/terraform#development) its tests.
 
 Releases are cut by release-please from Conventional Commits. Each release is tagged `vX.Y.Z` and attaches `index.js` and `index_bg.wasm`. Pin the module to a release tag or its commit SHA: before 1.0 there is no floating major tag, because minor releases may break.
 
