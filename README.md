@@ -28,15 +28,21 @@ The Worker and the module are released together from one tag.
 sequenceDiagram
     participant Reader as nix (substitute)
     participant Uploader as nix copy
-    participant Worker as cf-nix-cache Worker
     participant Issuer as OIDC issuer
+    participant Worker as cf-nix-cache Worker
     participant R2 as R2 bucket
 
-    Reader->>Worker: GET narinfo / NAR (public)
+    Note over Reader,R2: Reads are public
+    Reader->>Worker: GET narinfo / NAR
     Worker->>R2: get
     Worker-->>Reader: object
+
+    Note over Uploader,R2: Uploads need a token from an issuer the Worker trusts
+    Uploader->>Issuer: token for the cache's audience
+    Issuer-->>Uploader: JWT (5 minutes for GitHub Actions)
     Uploader->>Worker: PUT, HTTP Basic with the token as the password
-    Worker->>Issuer: discovery and signing keys (cached)
+    Worker->>Issuer: discovery and signing keys
+    Note right of Issuer: cached for an hour, not fetched per request
     Worker->>Worker: verify the token, match a claim set
     Worker->>Worker: validate narinfo, sign it if unsigned
     Worker->>R2: put
