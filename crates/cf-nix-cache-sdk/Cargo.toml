@@ -57,6 +57,10 @@ client = [
 # NarInfoSigKey, which signs a narinfo the way Nix does.
 signing = ["dep:ed25519-dalek"]
 
+[dev-dependencies]
+# Runs the health handler's async tests.
+tokio = { version = "1", features = ["macros", "rt"] }
+
 [build-dependencies]
 # Generates the API from the OpenAPI document, in build.rs. Without the `cli`
 # default it is only the library: no clap, no reqwest.
