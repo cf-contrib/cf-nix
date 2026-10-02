@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0](https://github.com/cf-contrib/cf-nix-cache/compare/v0.5.0...v0.6.0) (2026-10-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* an unbound bucket or an invalid CF_NIX_CACHE_API_OIDC_PROVIDERS now fails every request, reads and the health endpoints included, as a 500 with the reason logged. An invalid provider list used to fail only uploads.
+* `HealthClient::is_live` and `is_ready` return `HttpError` instead of `reqwest::Error`.
+
+### Features
+
+* build HealthClient like the generated HttpClient ([d5c7758](https://github.com/cf-contrib/cf-nix-cache/commit/d5c7758fe528ad8dee7321d2b63fa7080415cc97))
+* read the Worker's bindings into a Config, once per request ([b2f938e](https://github.com/cf-contrib/cf-nix-cache/commit/b2f938ea93d144ece0b681ee767d5eeaa049a843))
+
 ## [0.5.0](https://github.com/cf-contrib/cf-nix-cache/compare/v0.4.0...v0.5.0) (2026-10-02)
 
 
