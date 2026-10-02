@@ -7,7 +7,7 @@
 
 ```hcl
 module "cf_nix_cache" {
-  source = "git::https://github.com/cf-contrib/cf-nix-cache.git//deployment/terraform?ref=v0.4.0" # x-release-please-version
+  source = "git::https://github.com/cf-contrib/cf-nix-cache.git//deployment/terraform?ref=v0.5.0" # x-release-please-version
 
   account_id         = var.account_id
   hostname           = "cf-nix-cache.example.workers.dev"

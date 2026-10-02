@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.0](https://github.com/cf-contrib/cf-nix-cache/compare/v0.4.0...v0.5.0) (2026-10-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* GET /healthz is gone. Probe GET /health/ready, which answers 200 while the Worker is serving and doesn't check the bindings.
+* CF_NIX_CACHE_API_OIDC_ISSUERS is renamed CF_NIX_CACHE_API_OIDC_PROVIDERS (Terraform: oidc_issuers is oidc_providers). The SDK's put_nar_info and put_nar no longer take an authorization argument: set the header on the client.
+* CF_NIX_CACHE_API_OIDC_ISSUERS (Terraform: oidc_issuers), a list of { issuer, audience, jwks_uri?, claims }, replaces CF_NIX_WORKER_GITHUB_REPOSITORY, _OWNER_ID, _OIDC_AUDIENCE and _OIDC_RULES (github_repository, github_owner_id, github_oidc_audience, github_oidc_rules). GitHub Actions claim sets must pin repository_owner_id, and a * may only end a pattern. Uploads with a GitHub user token, GET /v1/whoami and the cf-contrib/cf-nix-cache action are gone; the netrc login is no longer read. CF_NIX_WORKER_BUCKET and CF_NIX_WORKER_SECRET are now CF_NIX_CACHE_API_BUCKET and CF_NIX_CACHE_API_SECRET.
+* the Terraform module moved to //deployment/terraform (was //packages/cf-nix-worker/terraform). Uploads must use the content type Nix sends, text/x-nix-narinfo or application/x-nix-nar, or get 415. NAR uploads over 64 MiB get 413. Requests that don't match the API spec are rejected with application/problem+json.
+
+### Features
+
+* authenticate uploads with OIDC tokens from any issuer ([36ebe2a](https://github.com/cf-contrib/cf-nix-cache/commit/36ebe2acfbbdd82664287d4fad409505ed5c62ec))
+* generate the API from an OpenAPI spec ([a15f3ba](https://github.com/cf-contrib/cf-nix-cache/commit/a15f3bad07c065cae4a96d5559e37abd9490be6b))
+* health endpoints from the SDK, and an auth layer ([9c19bfb](https://github.com/cf-contrib/cf-nix-cache/commit/9c19bfb0f4f575a6e2459245c0864e13ab3abe02))
+
+
+### Code Refactoring
+
+* authorize uploads in middleware, and name the config providers ([8cbb5a5](https://github.com/cf-contrib/cf-nix-cache/commit/8cbb5a578a1c04d4550d55e8b618e8072b65e815))
+
 ## [0.4.0](https://github.com/cf-contrib/cf-nix-cache/compare/v0.3.0...v0.4.0) (2026-10-01)
 
 
