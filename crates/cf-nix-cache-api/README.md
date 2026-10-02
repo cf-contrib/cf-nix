@@ -5,7 +5,7 @@
 > uploads, and authorizes uploaders by an OIDC token from an issuer you trust.
 
 Reads are public. An upload needs an OIDC token as the password of HTTP Basic
-credentials, from an issuer in `CF_NIX_CACHE_API_OIDC_ISSUERS`, for the cache's
+credentials, from a provider in `CF_NIX_CACHE_API_OIDC_PROVIDERS`, for the cache's
 audience, and matching one of that issuer's claim sets.
 
 ## Deploy
@@ -16,13 +16,13 @@ audience, and matching one of that issuer's claim sets.
    wrangler secrets-store secret create <store-id> --name cf-nix-cache-signing-key --scopes workers --remote
    ```
    Clients need the matching public key in `trusted-public-keys` (`nix key convert-secret-to-public`).
-2. **Decide who may upload**: an [issuer list](#authentication). For GitHub Actions, look up numeric IDs to pin. Pin IDs, not names, because a deleted repo or org name can be re-registered by someone else:
+2. **Decide who may upload**: a [provider list](#authentication). For GitHub Actions, look up numeric IDs to pin. Pin IDs, not names, because a deleted repo or org name can be re-registered by someone else:
    ```sh
    gh api orgs/<org> --jq .id           # repository_owner_id
    gh api repos/<org>/<repo> --jq .id   # repository_id
    ```
 3. **Deploy** the released bundle with the [Terraform / OpenTofu module](../../deployment/terraform) (`//deployment/terraform?ref=<version>`). It downloads the release (`index.js` and `index_bg.wasm`, both required), creates the R2 bucket, and sets up the bindings below and the workers.dev URL (or an optional custom domain). To deploy a local build instead, run `worker-build --release` here and point the module's `bundle_dir` at this directory's `build/`.
-4. **Check** that `<cache-url>/healthz` returns `200`. A `500` means the issuer list is invalid, the bucket isn't bound, or the signing key can't be read or parsed; the reason is in Workers Logs.
+4. **Check** that `<cache-url>/healthz` returns `200`. A `500` means the provider list is invalid, the bucket isn't bound, or the signing key can't be read or parsed; the reason is in Workers Logs.
 
 `wrangler.toml` in this directory is for local development, not production.
 
@@ -32,12 +32,13 @@ audience, and matching one of that issuer's claim sets.
 |---|---|---|---|
 | `CF_NIX_CACHE_API_BUCKET` | R2 bucket | yes | Stores `.narinfo` and `.nar` objects. |
 | `CF_NIX_CACHE_API_SECRET` | Secrets Store secret | conditional | `<key-name>:<base64>`, as emitted by `nix key generate-secret`. Required unless every uploader sends signed narinfo. A plain secret or var also works, e.g. for `wrangler dev`. |
-| `CF_NIX_CACHE_API_OIDC_ISSUERS` | var | for uploads | JSON array of the issuers whose tokens may upload; see [Authentication](#authentication). Unset, uploads are off. |
+| `CF_NIX_CACHE_API_OIDC_PROVIDERS` | var | for uploads | JSON array of the identity providers whose tokens may upload; see [Authentication](#authentication). Unset, uploads are off. |
 
 ## Authentication
 
-`CF_NIX_CACHE_API_OIDC_ISSUERS` lists the issuers whose tokens may upload, each
-with the audience its tokens must be for and who may upload:
+`CF_NIX_CACHE_API_OIDC_PROVIDERS` lists the identity providers whose tokens may
+upload: each one's issuer, the audience its tokens must be for, and who may
+upload:
 
 ```json
 [
@@ -61,7 +62,7 @@ with the audience its tokens must be for and who may upload:
 | Field | |
 |---|---|
 | `issuer` | Matched exactly against the token's `iss`. HTTPS, or plain HTTP on a loopback address for local development. |
-| `audience` | Must be one of the token's `aud` values (a trailing `/` is ignored). For GitHub Actions it can't be GitHub's default `https://github.com/<owner>`, so a token requested for AWS or GCP doesn't work here. |
+| `audience` | Must be one of the token's `aud` values (a trailing `/` is ignored on either side). Use one only this cache accepts, such as its URL, so a token meant for another service can't be replayed here. |
 | `jwks_uri` | Optional. Where the issuer's signing keys are. Without it, they're taken from the issuer's discovery document, `<issuer>/.well-known/openid-configuration`, which must name the same issuer. |
 | `claims` | The claim sets. A token is accepted if any one matches. |
 
@@ -139,7 +140,7 @@ must use the content type Nix sends: `text/x-nix-narinfo` for narinfo and
 | `401` | `unauthorized` | No token, or one that's malformed, badly signed, expired, for another audience, or from an issuer that isn't configured; or uploads are off |
 | `403` | `forbidden` | A valid token that no claim set for its issuer allows |
 | `404` | `not_found` | No such narinfo or NAR |
-| `500` | `misconfigured` | The issuer list, the bindings or the signing key are invalid |
+| `500` | `misconfigured` | The provider list, the bindings or the signing key are invalid |
 | `500` | `internal_error` | A stored object is unreadable |
 | `502` | `upstream_error` | The token's issuer, its discovery document or its keys, couldn't be reached |
 
@@ -163,8 +164,7 @@ is set, the Worker signs the upload itself. Otherwise the `PUT` returns `400`.
   must name the issuer it's for.
 - **Guardrails**, checked when the config loads: every issuer needs claim
   sets, a `*` may only end a pattern, `*_id` claims match exactly, and
-  GitHub Actions' claim sets must pin the owner and can't use its default
-  audience.
+  GitHub Actions' claim sets must pin the owner.
 - **Tokens are never stored or logged.** Auth results are cached per isolate,
   keyed by the SHA-256 of the token. Logs show the resolved identity.
 - **Issuers' keys** are cached for an hour, and an unknown `kid` refetches
@@ -211,6 +211,6 @@ nix develop -c cargo test --features integration             # in another
 - [`cf-nix-cache-sdk`](../cf-nix-cache-sdk), the API's types, the server traits the Worker implements, and the narinfo format: parsing, validation and signing
 - [`worker`](https://crates.io/crates/worker) and [`worker-macros`](https://crates.io/crates/worker-macros), the Cloudflare Workers Rust SDK, with [`axum`](https://crates.io/crates/axum), which serves the SDK's router
 - [`http-auth-basic`](https://crates.io/crates/http-auth-basic) for the auth header
-- [`serde`](https://crates.io/crates/serde) and [`serde_json`](https://crates.io/crates/serde_json) for the issuer list, token claims, discovery documents and key sets
+- [`serde`](https://crates.io/crates/serde) and [`serde_json`](https://crates.io/crates/serde_json) for the provider list, token claims, discovery documents and key sets
 - [`web-sys`](https://crates.io/crates/web-sys) for WebCrypto, which verifies token signatures
 - [`base64`](https://crates.io/crates/base64) to decode tokens, and [`sha2`](https://crates.io/crates/sha2) to key the auth cache by the token's hash

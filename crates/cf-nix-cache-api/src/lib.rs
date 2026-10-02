@@ -1,4 +1,3 @@
-mod auth;
 mod service;
 
 use axum::{
@@ -10,7 +9,7 @@ use cf_nix_cache_sdk::v1::{self, ErrorCode, NarInfoSigKey};
 use tower_service::Service;
 use worker::{send::SendFuture, *};
 
-use crate::service::CacheServiceHandler;
+use crate::service::{CacheServiceHandler, middleware};
 
 /// The R2 bucket every narinfo and NAR is stored in.
 const BUCKET: &str = "CF_NIX_CACHE_API_BUCKET";
@@ -18,10 +17,15 @@ const BUCKET: &str = "CF_NIX_CACHE_API_BUCKET";
 #[event(fetch)]
 async fn fetch(req: HttpRequest, env: Env, _ctx: Context) -> Result<HttpResponse> {
     // The router checks each request against the spec before it reaches a
-    // handler. Reads are public; every upload resolves to an identity in its
-    // handler, from the Authorization header the spec hands it.
-    let mut router = v1::cache_api_router(CacheServiceHandler::new(env.clone()))
-        // Not in the spec: it's for whoever deploys the Worker, not its clients.
+    // handler. Reads are public; the auth middleware authorizes every upload
+    // first, before its body is read.
+    let mut router = v1::cache_service_api_router(CacheServiceHandler::new(env.clone()))
+        .layer(axum::middleware::from_fn_with_state(
+            env.clone(),
+            middleware::authorize,
+        ))
+        // Added after the layer, so outside it. Not in the spec: it's for
+        // whoever deploys the Worker, not its clients.
         .route(
             "/healthz",
             axum::routing::get(move || SendFuture::new(get_healthz(env))),
@@ -60,7 +64,7 @@ async fn get_healthz(env: Env) -> HttpResponse {
 async fn check_health(env: &Env) -> std::result::Result<(), String> {
     env.bucket(BUCKET)
         .map_err(|_| format!("{BUCKET} is not bound"))?;
-    auth::check_config(env)?;
+    middleware::check_config(env)?;
     match signing_secret(env).await {
         Ok(Some(secret)) => NarInfoSigKey::parse(&secret)
             .map(|_| ())

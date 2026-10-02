@@ -13,8 +13,8 @@
 //! - **Narinfo**: [`v1::NarInfo`], which parses a `.narinfo` the way Nix does
 //!   and validates it the way the Worker does before storing an upload, and
 //!   (`signing` feature) `NarInfoSigKey`, which signs one the way Nix does.
-//! - **Server** (`server` feature): `CacheApi`, a response enum per
-//!   operation, and `cache_api_router`, an axum router over it that checks
+//! - **Server** (`server` feature): `CacheServiceApi`, a response enum per
+//!   operation, and `cache_service_api_router`, an axum router over it that checks
 //!   requests against the spec before they reach a handler.
 //! - **Client** (`client` feature): `HttpClient`, a method per operation.
 //!
@@ -23,10 +23,10 @@
 //! `openapi/nix/cache/v1/cachev1.yaml` is the source. `build.rs` runs
 //! [openapi-to-rust](https://github.com/gpu-cli/openapi-to-rust) over it into
 //! `OUT_DIR`, so none of it is checked in or edited by hand. What is
-//! hand-written, the narinfo format, is in `narinfo.rs`, and mounted into `v1`
+//! hand-written, the narinfo format, is in `model.rs`, and mounted into `v1`
 //! beside it.
 
-mod narinfo;
+mod model;
 
 /// Everything for `nix.cache.v1`: the types, the narinfo format, and the server
 /// and client the crate's features enable.
@@ -44,5 +44,5 @@ pub mod v1 {
 
     include!(concat!(env!("OUT_DIR"), "/cachev1/mod.rs"));
 
-    pub use crate::narinfo::*;
+    pub use crate::model::*;
 }

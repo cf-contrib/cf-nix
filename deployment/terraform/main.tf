@@ -5,8 +5,8 @@ locals {
   # Upload auth: off unless an issuer is configured. Unset optional fields are
   # left out rather than sent as null.
   auth_vars = {
-    CF_NIX_CACHE_API_OIDC_ISSUERS = length(var.oidc_issuers) == 0 ? null : jsonencode([
-      for i in var.oidc_issuers : merge(
+    CF_NIX_CACHE_API_OIDC_PROVIDERS = length(var.oidc_providers) == 0 ? null : jsonencode([
+      for i in var.oidc_providers : merge(
         { issuer = i.issuer, audience = coalesce(i.audience, local.url), claims = i.claims },
         i.jwks_uri == null ? {} : { jwks_uri = i.jwks_uri },
       )

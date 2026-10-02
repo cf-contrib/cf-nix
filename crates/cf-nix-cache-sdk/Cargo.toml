@@ -35,7 +35,7 @@ thiserror = { version = "2", optional = true }
 ed25519-dalek = { version = "3.0", default-features = false, features = ["alloc"], optional = true }
 
 [features]
-# CacheApi, and the router that serves it. What the Worker implements.
+# CacheServiceApi, and the router that serves it. What the Worker implements.
 server = [
   "dep:async-trait",
   "dep:axum",

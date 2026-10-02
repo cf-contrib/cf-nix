@@ -12,4 +12,4 @@ bucket_name = "nix-bucket-dev"
 [vars]
 # Uploads in local dev take tokens from the integration tests' issuer, which
 # they serve on 127.0.0.1:8788 while they run.
-CF_NIX_CACHE_API_OIDC_ISSUERS = '[{"issuer":"http://127.0.0.1:8788","audience":"http://127.0.0.1:8787","claims":[{"repository_owner_id":"100000001","ref":"refs/heads/main"}]}]'
+CF_NIX_CACHE_API_OIDC_PROVIDERS = '[{"issuer":"http://127.0.0.1:8788","audience":"http://127.0.0.1:8787","claims":[{"repository_owner_id":"100000001","ref":"refs/heads/main"}]}]'

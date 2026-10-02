@@ -19,6 +19,8 @@ cf-nix-cache-sdk = { path = "../cf-nix-cache-sdk", features = ["server", "signin
 async-trait = "0.1"
 axum = { version = "0.8", default-features = false, features = ["json"] }
 bytes = "1"
+# Reads and discards the body of a refused upload; see the auth middleware.
+http-body-util = "0.1"
 tower-service = "0.3"
 
 # Decodes the parts of an OIDC token.
@@ -27,7 +29,7 @@ base64 = "0.23.0"
 # Keys the auth cache by the SHA-256 of the credential.
 sha2 = { version = "0.11", default-features = false }
 
-# The issuer list, token claims, discovery documents and key sets. Already in
+# The provider list, token claims, discovery documents and key sets. Already in
 # the tree via `worker`.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

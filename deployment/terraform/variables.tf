@@ -54,24 +54,24 @@ variable "signing_key_secret" {
   default     = null
 }
 
-variable "oidc_issuers" {
+variable "oidc_providers" {
   type = list(object({
     issuer   = string
     audience = optional(string)
     jwks_uri = optional(string)
     claims   = list(map(string))
   }))
-  description = "OIDC issuers whose tokens may upload. A token is accepted if any claim set of its issuer matches. audience defaults to the cache URL; jwks_uri to what the issuer's discovery document says. Empty turns uploads off."
+  description = "OIDC identity providers whose tokens may upload. A token is accepted if any claim set of its provider matches. audience defaults to the cache URL; jwks_uri to what the issuer's discovery document says. Empty turns uploads off."
   default     = []
 
   validation {
-    condition     = alltrue([for i in var.oidc_issuers : length(i.claims) > 0 && alltrue([for c in i.claims : length(c) > 0])])
+    condition     = alltrue([for i in var.oidc_providers : length(i.claims) > 0 && alltrue([for c in i.claims : length(c) > 0])])
     error_message = "Every issuer needs at least one claim set, and no claim set may be empty."
   }
 
   validation {
     condition = alltrue([
-      for i in var.oidc_issuers : i.issuer != "https://token.actions.githubusercontent.com" || alltrue([for c in i.claims : contains(keys(c), "repository_owner_id")])
+      for i in var.oidc_providers : i.issuer != "https://token.actions.githubusercontent.com" || alltrue([for c in i.claims : contains(keys(c), "repository_owner_id")])
     ])
     error_message = "Every claim set for GitHub Actions must pin repository_owner_id: GitHub gives a token for any audience to any repository on github.com."
   }

@@ -34,12 +34,12 @@ async fn test_get_nix_cache_info() {
 
 #[tokio::test]
 async fn test_get_narinfo() {
-    let _lock = helper::NARINFO_LOCK.lock().await;
-    let client = helper::client();
+    let _uploads = helper::UPLOADS.lock().await;
+    let client = helper::uploader();
     let data = narinfo_fixture(NARINFO);
 
     client
-        .put_nar_info(NARINFO, helper::uploader(), data.clone())
+        .put_nar_info(NARINFO, data.clone())
         .await
         .expect("the upload failed");
     client
@@ -57,10 +57,10 @@ async fn test_get_narinfo() {
 
 #[tokio::test]
 async fn test_post_mass_query() {
-    let _lock = helper::NARINFO_LOCK.lock().await;
-    let client = helper::client();
+    let _uploads = helper::UPLOADS.lock().await;
+    let client = helper::uploader();
     client
-        .put_nar_info(NARINFO, helper::uploader(), narinfo_fixture(NARINFO))
+        .put_nar_info(NARINFO, narinfo_fixture(NARINFO))
         .await
         .expect("the upload failed");
 
@@ -73,13 +73,14 @@ async fn test_post_mass_query() {
 
 #[tokio::test]
 async fn test_get_content_addressed_narinfo() {
+    let _uploads = helper::UPLOADS.lock().await;
     // Written and signed by Nix for a `nix store add` path: it has a CA: line.
     let hash = "2h2g7i4x6gsadn2s7vi0af6g8b24n584";
-    let client = helper::client();
+    let client = helper::uploader();
     let data = narinfo_fixture(hash);
 
     client
-        .put_nar_info(hash, helper::uploader(), data.clone())
+        .put_nar_info(hash, data.clone())
         .await
         .expect("the upload failed");
 
@@ -95,7 +96,7 @@ async fn test_get_content_addressed_narinfo() {
 
 #[tokio::test]
 async fn test_get_narinfo_not_found() {
-    let client = helper::client();
+    let client = helper::uploader();
 
     let err = client.get_nar_info(MISSING).await.unwrap_err();
     assert!(matches!(
@@ -113,11 +114,12 @@ async fn test_get_narinfo_not_found() {
 
 #[tokio::test]
 async fn test_get_nar() {
-    let client = helper::client();
+    let _uploads = helper::UPLOADS.lock().await;
+    let client = helper::uploader();
     let data = helper::fixture(&format!("{NAR}.nar"));
 
     client
-        .put_nar(NAR, helper::uploader(), data.clone())
+        .put_nar(NAR, data.clone())
         .await
         .expect("the upload failed");
     client.head_nar(NAR).await.expect("the NAR exists");
@@ -129,7 +131,7 @@ async fn test_get_nar() {
 
 #[tokio::test]
 async fn test_get_nar_not_found() {
-    let client = helper::client();
+    let client = helper::uploader();
 
     let err = client.get_nar(MISSING).await.unwrap_err();
     assert!(matches!(
@@ -141,19 +143,15 @@ async fn test_get_nar_not_found() {
 
 #[tokio::test]
 async fn test_served_content_types() {
-    let _lock = helper::NARINFO_LOCK.lock().await;
+    let _uploads = helper::UPLOADS.lock().await;
     // What Nix and nix-serve use. The client doesn't return headers.
-    let client = helper::client();
+    let client = helper::uploader();
     client
-        .put_nar_info(NARINFO, helper::uploader(), narinfo_fixture(NARINFO))
+        .put_nar_info(NARINFO, narinfo_fixture(NARINFO))
         .await
         .expect("the upload failed");
     client
-        .put_nar(
-            NAR,
-            helper::uploader(),
-            helper::fixture(&format!("{NAR}.nar")),
-        )
+        .put_nar(NAR, helper::fixture(&format!("{NAR}.nar")))
         .await
         .expect("the upload failed");
 
@@ -170,6 +168,7 @@ async fn test_served_content_types() {
 
 #[tokio::test]
 async fn test_put_rejects_undeclared_content_type() {
+    let _uploads = helper::UPLOADS.lock().await;
     let resp = helper::put(
         &format!("{NARINFO}.narinfo"),
         "application/octet-stream",
@@ -182,8 +181,8 @@ async fn test_put_rejects_undeclared_content_type() {
 /// Uploads the fixture narinfo with `authorization`, and returns the
 /// rejection's status and body.
 async fn rejected(authorization: Option<String>) -> (u16, Option<Error>) {
-    let err = helper::client()
-        .put_nar_info(NARINFO, authorization, narinfo_fixture(NARINFO))
+    let err = helper::client_with(authorization)
+        .put_nar_info(NARINFO, narinfo_fixture(NARINFO))
         .await
         .expect_err("the upload should be refused");
     let body = match err.api().and_then(|api| api.typed.clone()) {
@@ -204,6 +203,7 @@ fn token_with(claim: &str, value: Value) -> Option<String> {
 
 #[tokio::test]
 async fn test_put_rejects_bad_credentials() {
+    let _uploads = helper::UPLOADS.lock().await;
     for authorization in [
         None,
         Some("Bearer abc".to_string()),
@@ -217,6 +217,7 @@ async fn test_put_rejects_bad_credentials() {
 
 #[tokio::test]
 async fn test_put_says_why_a_token_is_refused() {
+    let _uploads = helper::UPLOADS.lock().await;
     let now = helper::claims()["iat"].as_u64().unwrap();
     for (claim, value, expected) in [
         (
@@ -242,6 +243,7 @@ async fn test_put_says_why_a_token_is_refused() {
 
 #[tokio::test]
 async fn test_put_forbids_a_token_no_claim_set_allows() {
+    let _uploads = helper::UPLOADS.lock().await;
     let (status, body) = rejected(token_with("ref", json!("refs/heads/dev"))).await;
     assert_eq!(status, 403);
     let body = body.expect("a JSON error");
@@ -265,16 +267,16 @@ async fn test_healthz() {
 
 #[tokio::test]
 async fn test_put_narinfo_keeps_unknown_fields() {
-    let _lock = helper::NARINFO_LOCK.lock().await;
+    let _uploads = helper::UPLOADS.lock().await;
     // Nix ignores keys it doesn't know; the Worker must not drop them either.
-    let client = helper::client();
+    let client = helper::uploader();
     let with_extra = format!(
         "{}System: x86_64-linux\nFuture: kept\n",
         narinfo_fixture(NARINFO)
     );
 
     client
-        .put_nar_info(NARINFO, helper::uploader(), with_extra.clone())
+        .put_nar_info(NARINFO, with_extra.clone())
         .await
         .expect("the upload failed");
 

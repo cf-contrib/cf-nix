@@ -14,8 +14,8 @@ module "cf_nix_cache" {
   bucket_name        = "nix-cache"
   signing_key_secret = { secret_store_id = var.secret_store_id, secret_name = "cf-nix-cache-signing-key" }
 
-  # Who may upload: OIDC tokens from these issuers that match a claim set.
-  oidc_issuers = [{
+  # Who may upload: OIDC tokens from these providers that match a claim set.
+  oidc_providers = [{
     # GitHub Actions jobs in this org's repo, on main. The audience defaults
     # to the cache URL.
     issuer = "https://token.actions.githubusercontent.com"
@@ -80,7 +80,7 @@ Then set up upload credentials as described in the Worker's
 | `bucket_name` | yes | | R2 bucket to create for `.narinfo` and `.nar` objects. |
 | `expire_after_days` | no | `45` | Delete objects this many days after upload. `null` keeps them. |
 | `signing_key_secret` | no | `null` | `{ secret_store_id, secret_name }` of the signing key. `null`: uploaders must sign. |
-| `oidc_issuers` | no | `[]` | Issuers whose tokens may upload: `{ issuer, audience?, jwks_uri?, claims }`. `audience` defaults to the cache URL; `claims` is a list of claim sets, any one of which must match. Empty turns uploads off. See the Worker's [Authentication](../../crates/cf-nix-cache-api/README.md#authentication). |
+| `oidc_providers` | no | `[]` | Identity providers whose tokens may upload: `{ issuer, audience?, jwks_uri?, claims }`. `audience` defaults to the cache URL; `claims` is a list of claim sets, any one of which must match. Empty turns uploads off. See the Worker's [Authentication](../../crates/cf-nix-cache-api/README.md#authentication). |
 | `release_tag` | no | this module's release | Release to deploy, e.g. `v1.2.3`, or `"latest"`. |
 | `bundle_dir` | no | `null` | A local `worker-build --release` output directory to deploy instead of a release. |
 | `worker_name` | no | `cf-nix-cache` | Cloudflare Worker script name. |
@@ -102,11 +102,11 @@ release's bundle, uploads a new Worker version and shifts all traffic to it.
 
 ### From 0.4
 
-Uploads authenticate with OIDC tokens from any issuer you list, instead of
+Uploads authenticate with OIDC tokens from any provider you list, instead of
 GitHub tokens or GitHub Actions only:
 
 - `github_owner_id`, `github_oidc_audience` and `github_oidc_rules` become one
-  `oidc_issuers` entry for `https://token.actions.githubusercontent.com`. Add
+  `oidc_providers` entry for `https://token.actions.githubusercontent.com`. Add
   `repository_owner_id` to each of its claim sets, which used to be implied,
   and write any `*` only at the end of a pattern.
 - `github_repository` is gone, and with it uploads with a person's GitHub
