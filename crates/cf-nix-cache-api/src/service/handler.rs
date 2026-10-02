@@ -21,45 +21,25 @@
 //! No method authorizes: by the time an upload reaches one, the auth
 //! [`layer`](super::layer) has.
 
-use std::fmt::Write;
+use std::{fmt::Write, sync::Arc};
 
 use cf_nix_cache_sdk::v1::{
     self, CacheServiceApi, ErrorCode, NarInfo, NarInfoContext, NarInfoSigKey, Validate, append_sig,
 };
-use worker::{Env, Error, console_error, send::SendFuture};
+use worker::{Error, console_error, send::SendFuture};
 
-/// The binding of the R2 bucket every narinfo and NAR is stored in.
-const BUCKET_KEY: &str = "CF_NIX_CACHE_API_BUCKET";
-
-/// The binding of the narinfo signing key.
-const SECRET_KEY: &str = "CF_NIX_CACHE_API_SECRET";
+use super::config::{Config, SECRET_KEY};
 
 /// The Nix binary cache protocol, over the R2 bucket.
 #[derive(Clone)]
 pub struct CacheServiceHandler {
-    env: Env,
+    config: Arc<Config>,
 }
 
 impl CacheServiceHandler {
-    /// Creates a handler over the Worker's bindings.
-    pub fn new(env: Env) -> Self {
-        Self { env }
-    }
-
-    /// Reads the narinfo signing key, `CF_NIX_CACHE_API_SECRET`.
-    ///
-    /// Deployments bind it from Secrets Store, so the key never passes
-    /// through Terraform. `wrangler dev` and plain `secret_text` bindings are
-    /// read as a var.
-    async fn signing_secret(&self) -> worker::Result<Option<String>> {
-        if let Ok(store) = self.env.secret_store(SECRET_KEY) {
-            return store.get().await;
-        }
-        Ok(self
-            .env
-            .var(SECRET_KEY)
-            .ok()
-            .map(|secret| secret.to_string()))
+    /// Creates a handler over the Worker's configuration.
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
     }
 }
 
@@ -83,7 +63,7 @@ impl CacheServiceApi for CacheServiceHandler {
     async fn post_mass_query(&self, body: String) -> v1::PostMassQueryResponse {
         SendFuture::new(async move {
             let found = async {
-                let bucket = self.env.bucket(BUCKET_KEY)?;
+                let bucket = self.config.bucket();
                 let mut data = String::new();
                 for hash in body.lines() {
                     let key = if hash.ends_with(".narinfo") {
@@ -113,12 +93,7 @@ impl CacheServiceApi for CacheServiceHandler {
     /// HEAD /:hash.narinfo — used by Nix uploaders to skip already-cached paths.
     async fn head_nar_info(&self, hash: String) -> v1::HeadNarInfoResponse {
         SendFuture::new(async move {
-            let head = async {
-                self.env
-                    .bucket(BUCKET_KEY)?
-                    .head(format!("{hash}.narinfo"))
-                    .await
-            };
+            let head = async { self.config.bucket().head(format!("{hash}.narinfo")).await };
             match head.await {
                 Ok(Some(_)) => v1::HeadNarInfoResponse::Ok,
                 Ok(None) => v1::HeadNarInfoResponse::NotFound,
@@ -139,7 +114,7 @@ impl CacheServiceApi for CacheServiceHandler {
             // Served as stored: the text Nix uploaded, plus a Sig: line if the
             // Worker signed it.
             let read = async {
-                let bucket = self.env.bucket(BUCKET_KEY)?;
+                let bucket = self.config.bucket();
                 let Some(object) = bucket.get(format!("{hash}.narinfo")).execute().await? else {
                     return Ok(None);
                 };
@@ -207,7 +182,7 @@ impl CacheServiceApi for CacheServiceHandler {
             let data = if !info.sigs.is_empty() {
                 body
             } else {
-                let secret = match self.signing_secret().await {
+                let secret = match self.config.secret().await {
                     Ok(Some(secret)) => secret,
                     Ok(None) => {
                         return bad_request(
@@ -231,7 +206,7 @@ impl CacheServiceApi for CacheServiceHandler {
             };
 
             let write = async {
-                let bucket = self.env.bucket(BUCKET_KEY)?;
+                let bucket = self.config.bucket();
                 bucket.put(format!("{hash}.narinfo"), data).execute().await
             };
             match write.await {
@@ -245,12 +220,7 @@ impl CacheServiceApi for CacheServiceHandler {
     /// HEAD /nar/:hash.nar — used by Nix uploaders to skip already-cached NARs.
     async fn head_nar(&self, hash: String) -> v1::HeadNarResponse {
         SendFuture::new(async move {
-            let head = async {
-                self.env
-                    .bucket(BUCKET_KEY)?
-                    .head(format!("{hash}.nar"))
-                    .await
-            };
+            let head = async { self.config.bucket().head(format!("{hash}.nar")).await };
             match head.await {
                 Ok(Some(_)) => v1::HeadNarResponse::Ok,
                 Ok(None) => v1::HeadNarResponse::NotFound,
@@ -268,7 +238,7 @@ impl CacheServiceApi for CacheServiceHandler {
     async fn get_nar(&self, hash: String) -> v1::GetNarResponse {
         SendFuture::new(async move {
             let read = async {
-                let bucket = self.env.bucket(BUCKET_KEY)?;
+                let bucket = self.config.bucket();
                 let Some(object) = bucket.get(format!("{hash}.nar")).execute().await? else {
                     return Ok(None);
                 };
@@ -300,7 +270,7 @@ impl CacheServiceApi for CacheServiceHandler {
     async fn put_nar(&self, hash: String, body: bytes::Bytes) -> v1::PutNarResponse {
         SendFuture::new(async move {
             let write = async {
-                let bucket = self.env.bucket(BUCKET_KEY)?;
+                let bucket = self.config.bucket();
                 bucket
                     .put(format!("{hash}.nar"), body.to_vec())
                     .execute()

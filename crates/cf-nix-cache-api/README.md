@@ -22,7 +22,7 @@ audience, and matching one of that issuer's claim sets.
    gh api repos/<org>/<repo> --jq .id   # repository_id
    ```
 3. **Deploy** the released bundle with the [Terraform / OpenTofu module](../../deployment/terraform) (`//deployment/terraform?ref=<version>`). It downloads the release (`index.js` and `index_bg.wasm`, both required), creates the R2 bucket, and sets up the bindings below and the workers.dev URL (or an optional custom domain). To deploy a local build instead, run `worker-build --release` here and point the module's `bundle_dir` at this directory's `build/`.
-4. **Check** that `<cache-url>/health/ready` returns `200`. It says the Worker is up and serving; it doesn't check the bindings. An invalid provider list, an unbound bucket or an unreadable signing key shows on the first upload instead, as a `500` with the reason in Workers Logs.
+4. **Check** that `<cache-url>/health/ready` returns `200`. An unbound bucket or an invalid provider list fails every request, this one too, as a `500` with the reason in Workers Logs. An unreadable signing key shows only on the first upload that needs signing, as a `500`.
 
 `wrangler.toml` in this directory is for local development, not production.
 
@@ -171,7 +171,7 @@ must use the content type Nix sends: `text/x-nix-narinfo` for narinfo and
 | `GET` | `/nar/<hash>.nar` | public | NAR archive bytes. |
 | `HEAD` | `/nar/<hash>.nar` | public | Existence check for a NAR (200 / 404). |
 | `PUT` | `/nar/<hash>.nar` | token | Upload a NAR archive. |
-| `GET` | `/health/live`, `/health/ready` | public | `200` while the Worker is up and serving. The SDK's `HealthHandler`; a deployment check, so not in the OpenAPI document. |
+| `GET` | `/health/live`, `/health/ready` | public | `200` while the Worker is up and serving, and `500`, like every request, while its bucket is unbound or its provider list invalid. The SDK's `HealthHandler`; a deployment check, so not in the OpenAPI document. |
 
 **Errors** are JSON, in the shape cf-oidc-auth uses: `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of a failed upload, so the message says what to fix, except for `500` and `502`, whose details go only to the logs.
 

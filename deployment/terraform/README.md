@@ -59,7 +59,7 @@ wrangler secrets-store secret create <store-id> --name cf-nix-cache-signing-key 
 export CLOUDFLARE_API_TOKEN=...
 tofu init
 tofu apply
-curl -fsS "$(tofu output -raw cache_url)/health/ready"   # 200 once the Worker is serving
+curl -fsS "$(tofu output -raw cache_url)/health/ready"   # 200 once the Worker is serving and configured
 ```
 
 Terraform only references the secret by store ID and name. The key never

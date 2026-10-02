@@ -24,6 +24,7 @@ use std::{
     fmt,
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -44,15 +45,14 @@ use tower_layer::Layer;
 use tower_service::Service;
 use web_sys::{CryptoKey, WorkerGlobalScope};
 use worker::{
-    Date, Env, Fetch, console_error, console_log,
+    Date, Fetch, console_error, console_log,
     js_sys::{self, Uint8Array},
     send::SendFuture,
     wasm_bindgen::{JsCast, JsValue},
     wasm_bindgen_futures::JsFuture,
 };
 
-/// The binding of the providers whose tokens may upload.
-const PROVIDERS_KEY: &str = "CF_NIX_CACHE_API_OIDC_PROVIDERS";
+use super::config::{Config, PROVIDERS_KEY};
 
 /// Clock tolerance for `exp` and `nbf`.
 const LEEWAY_SECS: u64 = 60;
@@ -70,17 +70,17 @@ thread_local! {
     static CACHE: RefCell<IdentityCache> = RefCell::new(IdentityCache::new());
 }
 
-/// Authorizes every `PUT` before the routes it's layered over, over the
-/// Worker's bindings. Every other method passes through.
+/// Authorizes every `PUT` before the routes it's layered over, against the
+/// providers in the Worker's configuration. Every other method passes through.
 #[derive(Clone)]
 pub struct AuthorizeLayer {
-    env: Env,
+    config: Arc<Config>,
 }
 
 impl AuthorizeLayer {
-    /// A layer that reads the providers from `env`.
-    pub fn new(env: Env) -> Self {
-        Self { env }
+    /// A layer that takes the providers from `config`.
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
     }
 }
 
@@ -90,7 +90,7 @@ impl<S> Layer<S> for AuthorizeLayer {
     fn layer(&self, inner: S) -> Self::Service {
         Authorize {
             inner,
-            env: self.env.clone(),
+            config: self.config.clone(),
         }
     }
 }
@@ -101,7 +101,7 @@ impl<S> Layer<S> for AuthorizeLayer {
 #[derive(Clone)]
 pub struct Authorize<S> {
     inner: S,
-    env: Env,
+    config: Arc<Config>,
 }
 
 impl<S> Service<Request> for Authorize<S>
@@ -122,7 +122,7 @@ where
         // place for the next request.
         let clone = self.inner.clone();
         let mut inner = std::mem::replace(&mut self.inner, clone);
-        let env = self.env.clone();
+        let config = self.config.clone();
 
         Box::pin(async move {
             if req.method() != Method::PUT {
@@ -131,16 +131,12 @@ where
 
             // The providers whose tokens may upload. None configured means
             // uploads are off.
-            let config = match IdentityConfig::from_env(&env) {
-                Ok(Some(config)) => config,
-                Ok(None) => {
-                    let err = AuthError::Unauthorized(format!(
-                        "uploads are off: {PROVIDERS_KEY} is not set"
-                    ));
-                    return Ok(refuse(req, err).await);
-                }
-                Err(err) => return Ok(refuse(req, err).await),
-            };
+            let providers = config.providers();
+            if providers.is_empty() {
+                let err =
+                    AuthError::Unauthorized(format!("uploads are off: {PROVIDERS_KEY} is not set"));
+                return Ok(refuse(req, err).await);
+            }
 
             // The token: the password of the request's HTTP Basic credentials.
             let header = req
@@ -155,7 +151,7 @@ where
             // Verifying fetches the issuer's keys, and fetch futures aren't
             // `Send`, which the router wants; a Worker is single-threaded, so
             // it runs in a `SendFuture`.
-            let identity = match SendFuture::new(config.verify(&token)).await {
+            let identity = match SendFuture::new(verify(providers, &token)).await {
                 Ok(identity) => identity,
                 Err(err) => return Ok(refuse(req, err).await),
             };
@@ -217,15 +213,13 @@ pub enum AuthError {
     Unauthorized(String),
     /// A valid token no claim set allows (`403`).
     Forbidden(String),
-    /// The Worker's auth configuration is invalid (`500`). Fails closed.
-    Config(String),
     /// An issuer's discovery document or keys couldn't be fetched (`502`).
     /// Not the caller's fault.
     Upstream(String),
 }
 
-/// The error, as the JSON every error has. IdentityConfig and upstream details are
-/// logged, not returned.
+/// The error, as the JSON every error has. Upstream details are logged, not
+/// returned.
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         let (status, body) = match self {
@@ -237,13 +231,6 @@ impl IntoResponse for AuthError {
                 StatusCode::FORBIDDEN,
                 v1::Error::new(ErrorCode::Forbidden, msg),
             ),
-            AuthError::Config(msg) => {
-                console_error!("auth config invalid: {msg}");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    v1::Error::new(ErrorCode::Misconfigured, "auth is misconfigured"),
-                )
-            }
             AuthError::Upstream(msg) => {
                 console_error!("auth upstream failure: {msg}");
                 (
@@ -263,108 +250,56 @@ fn invalid(what: &str) -> AuthError {
     AuthError::Unauthorized(format!("invalid token: {what}"))
 }
 
-/// The identity providers whose tokens may upload
-/// (`CF_NIX_CACHE_API_OIDC_PROVIDERS`).
-#[derive(Debug, Deserialize)]
-#[serde(transparent)]
-struct IdentityConfig {
-    providers: Vec<IdentityProvider>,
+/// Verifies a token from one of `providers` and matches it against that
+/// provider's claim sets.
+async fn verify(providers: &[ProviderConfig], jwt: &str) -> Result<Identity, AuthError> {
+    let now_ms = Date::now().as_millis();
+    let key = IdentityCache::key(jwt);
+    if let Some(result) = CACHE.with_borrow(|cache| cache.get(&key, now_ms)) {
+        return result;
+    }
+
+    let token = Jwt::decode(jwt)?;
+    let provider = find_provider(providers, &token.claims)?;
+    let jwk = provider.find_key(&token.kid, now_ms).await?;
+    if !jwk
+        .verify_rs256(token.signing_input.as_bytes(), &token.signature)
+        .await?
+    {
+        return Err(invalid("bad signature"));
+    }
+
+    let result = provider.check_claims(&token.claims, now_ms / 1000);
+    // A verified token's identity can't change, so both outcomes hold until
+    // it expires. Expiry and other time-based failures are not cached.
+    if matches!(result, Ok(_) | Err(AuthError::Forbidden(_))) {
+        if let Some(exp) = token.claims.get("exp").and_then(Value::as_u64) {
+            let expires_at = (exp + LEEWAY_SECS) * 1000;
+            CACHE.with_borrow_mut(|cache| cache.insert(key, result.clone(), expires_at, now_ms));
+        }
+    }
+    result
 }
 
-impl IdentityConfig {
-    /// The config in the Worker's `CF_NIX_CACHE_API_OIDC_PROVIDERS`
-    /// binding, or `None` if it isn't set.
-    fn from_env(env: &Env) -> Result<Option<Self>, AuthError> {
-        Self::from_var(
-            env.var(PROVIDERS_KEY)
-                .ok()
-                .map(|value| value.to_string())
-                .as_deref(),
-        )
-    }
-
-    /// The config in `value`, the binding's value, or `None` if it's unset
-    /// or empty, which turns uploads off. An invalid one fails closed.
-    fn from_var(value: Option<&str>) -> Result<Option<Self>, AuthError> {
-        value
-            .filter(|value| !value.is_empty())
-            .map(|value| Self::parse(value).map_err(AuthError::Config))
-            .transpose()
-    }
-
-    fn parse(json: &str) -> Result<Self, String> {
-        let config: Self = serde_json::from_str(json).map_err(|err| {
-            format!(
-                "{PROVIDERS_KEY} must be a JSON array of {{ issuer, audience, jwks_uri?, claims }}: {err}"
-            )
-        })?;
-        if config.providers.is_empty() {
-            return Err(format!("{PROVIDERS_KEY} must name at least one provider"));
-        }
-        for (index, provider) in config.providers.iter().enumerate() {
-            provider.check(&format!("{PROVIDERS_KEY}[{index}]"))?;
-            if config.providers[..index]
-                .iter()
-                .any(|other| other.issuer == provider.issuer)
-            {
-                return Err(format!(
-                    "{PROVIDERS_KEY}[{index}]: {} is configured twice",
-                    provider.issuer
-                ));
-            }
-        }
-        Ok(config)
-    }
-
-    /// Verifies a token from one of the configured issuers and matches it
-    /// against that issuer's claim sets.
-    async fn verify(&self, jwt: &str) -> Result<Identity, AuthError> {
-        let now_ms = Date::now().as_millis();
-        let key = IdentityCache::key(jwt);
-        if let Some(result) = CACHE.with_borrow(|cache| cache.get(&key, now_ms)) {
-            return result;
-        }
-
-        let token = Jwt::decode(jwt)?;
-        let provider = self.provider(&token.claims)?;
-        let jwk = provider.find_key(&token.kid, now_ms).await?;
-        if !jwk
-            .verify_rs256(token.signing_input.as_bytes(), &token.signature)
-            .await?
-        {
-            return Err(invalid("bad signature"));
-        }
-
-        let result = provider.check_claims(&token.claims, now_ms / 1000);
-        // A verified token's identity can't change, so both outcomes hold until
-        // it expires. Expiry and other time-based failures are not cached.
-        if matches!(result, Ok(_) | Err(AuthError::Forbidden(_))) {
-            if let Some(exp) = token.claims.get("exp").and_then(Value::as_u64) {
-                let expires_at = (exp + LEEWAY_SECS) * 1000;
-                CACHE
-                    .with_borrow_mut(|cache| cache.insert(key, result.clone(), expires_at, now_ms));
-            }
-        }
-        result
-    }
-
-    /// The configured issuer a token claims to come from.
-    fn provider(&self, claims: &Map<String, Value>) -> Result<&IdentityProvider, AuthError> {
-        let Some(iss) = claims.get("iss").and_then(Value::as_str) else {
-            return Err(invalid("missing iss"));
-        };
-        self.providers
-            .iter()
-            .find(|provider| provider.issuer == iss)
-            .ok_or_else(|| AuthError::Unauthorized(format!("issuer {iss} is not configured")))
-    }
+/// The provider in `providers` a token claims to come from.
+fn find_provider<'a>(
+    providers: &'a [ProviderConfig],
+    claims: &Map<String, Value>,
+) -> Result<&'a ProviderConfig, AuthError> {
+    let Some(iss) = claims.get("iss").and_then(Value::as_str) else {
+        return Err(invalid("missing iss"));
+    };
+    providers
+        .iter()
+        .find(|provider| provider.issuer == iss)
+        .ok_or_else(|| AuthError::Unauthorized(format!("issuer {iss} is not configured")))
 }
 
 /// One identity provider: its issuer, the audience its tokens must be for,
 /// and who may upload.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct IdentityProvider {
+pub struct ProviderConfig {
     /// Matched exactly against a token's `iss`.
     issuer: String,
     /// Expected `aud`. A trailing `/` is ignored, here and in the token.
@@ -376,7 +311,44 @@ struct IdentityProvider {
     claims: Vec<ClaimSet>,
 }
 
-impl IdentityProvider {
+impl ProviderConfig {
+    /// The providers in `value`, `CF_NIX_CACHE_API_OIDC_PROVIDERS`'s value:
+    /// none if it's unset or empty, which turns uploads off.
+    ///
+    /// # Errors
+    ///
+    /// Why `value` isn't a valid provider list.
+    pub fn from_var(value: Option<&str>) -> Result<Vec<Self>, String> {
+        match value.filter(|value| !value.is_empty()) {
+            Some(value) => Self::parse(value),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    fn parse(json: &str) -> Result<Vec<Self>, String> {
+        let providers: Vec<Self> = serde_json::from_str(json).map_err(|err| {
+            format!(
+                "{PROVIDERS_KEY} must be a JSON array of {{ issuer, audience, jwks_uri?, claims }}: {err}"
+            )
+        })?;
+        if providers.is_empty() {
+            return Err(format!("{PROVIDERS_KEY} must name at least one provider"));
+        }
+        for (index, provider) in providers.iter().enumerate() {
+            provider.check(&format!("{PROVIDERS_KEY}[{index}]"))?;
+            if providers[..index]
+                .iter()
+                .any(|other| other.issuer == provider.issuer)
+            {
+                return Err(format!(
+                    "{PROVIDERS_KEY}[{index}]: {} is configured twice",
+                    provider.issuer
+                ));
+            }
+        }
+        Ok(providers)
+    }
+
     /// What deserializing can't check.
     fn check(&self, at: &str) -> Result<(), String> {
         check_url(&self.issuer).map_err(|why| format!("{at}.issuer {why}"))?;
@@ -874,16 +846,13 @@ mod tests {
 
     #[test]
     fn config_is_off_without_providers() {
-        assert!(IdentityConfig::from_var(None).unwrap().is_none());
-        assert!(IdentityConfig::from_var(Some("")).unwrap().is_none());
+        assert!(ProviderConfig::from_var(None).unwrap().is_empty());
+        assert!(ProviderConfig::from_var(Some("")).unwrap().is_empty());
     }
 
     #[test]
     fn config_fails_closed() {
-        assert!(matches!(
-            IdentityConfig::from_var(Some("not json")),
-            Err(AuthError::Config(_))
-        ));
+        assert!(ProviderConfig::from_var(Some("not json")).is_err());
     }
 
     #[test]
@@ -963,17 +932,17 @@ mod tests {
     const ISSUER: &str = "https://issuer.example.com";
 
     /// One provider with these claim sets.
-    fn config(issuer: &str, claims: Value) -> IdentityConfig {
+    fn config(issuer: &str, claims: Value) -> Vec<ProviderConfig> {
         let json = json!([{
             "issuer": issuer,
             "audience": "https://cache.example.com",
             "claims": claims,
         }]);
-        IdentityConfig::parse(&json.to_string()).expect("config should parse")
+        ProviderConfig::parse(&json.to_string()).expect("config should parse")
     }
 
     fn parse_err(json: Value) -> String {
-        IdentityConfig::parse(&json.to_string()).unwrap_err()
+        ProviderConfig::parse(&json.to_string()).unwrap_err()
     }
 
     fn claims() -> Map<String, Value> {
@@ -1065,8 +1034,8 @@ mod tests {
     #[test]
     fn audience_ignores_a_trailing_slash_on_either_side() {
         let json = json!([{ "issuer": ISSUER, "audience": "https://cache.example.com/", "claims": [{ "ref": "x" }] }]);
-        let config = IdentityConfig::parse(&json.to_string()).unwrap();
-        let provider = &config.providers[0];
+        let config = ProviderConfig::parse(&json.to_string()).unwrap();
+        let provider = &config[0];
         assert!(provider.audience_is("https://cache.example.com"));
         assert!(provider.audience_is("https://cache.example.com/"));
         assert!(!provider.audience_is("https://cache.example.com.evil"));
@@ -1116,7 +1085,7 @@ mod tests {
             ISSUER,
             json!([{ "repository": "example-org/*", "ref": "refs/heads/main" }]),
         );
-        let set = &config.providers[0].claims[0];
+        let set = &config[0].claims[0];
         assert!(set.matches(&claims()));
 
         let mut other_ref = claims();
@@ -1136,7 +1105,7 @@ mod tests {
                 { "environment": "release" },
             ]),
         );
-        let sets = &config.providers[0].claims;
+        let sets = &config[0].claims;
         assert!(
             sets[0].matches(&claims()),
             "a list matches if any entry does"
@@ -1150,18 +1119,18 @@ mod tests {
     #[test]
     fn issuer_of_picks_the_configured_issuer() {
         let config = config(ISSUER, json!([{ "ref": "refs/heads/main" }]));
-        assert_eq!(config.provider(&claims()).unwrap().issuer, ISSUER);
+        assert_eq!(find_provider(&config, &claims()).unwrap().issuer, ISSUER);
 
         let mut other = claims();
         other.insert("iss".into(), "https://other.example.com".into());
         assert_eq!(
-            config.provider(&other).unwrap_err(),
+            find_provider(&config, &other).unwrap_err(),
             AuthError::Unauthorized("issuer https://other.example.com is not configured".into())
         );
 
         other.remove("iss");
         assert!(matches!(
-            config.provider(&other),
+            find_provider(&config, &other),
             Err(AuthError::Unauthorized(_))
         ));
     }
@@ -1172,7 +1141,7 @@ mod tests {
             ISSUER,
             json!([{ "ref": "refs/heads/release" }, { "repository_id": "200000002", "ref": "refs/heads/main" }]),
         );
-        let identity = config.providers[0]
+        let identity = config[0]
             .check_claims(&claims(), NOW)
             .expect("should match");
         assert_eq!(
@@ -1193,7 +1162,7 @@ mod tests {
             json!(["https://other.example.com", "https://cache.example.com"]),
         );
         let config = config(ISSUER, json!([{ "ref": "refs/heads/main" }]));
-        assert!(config.providers[0].check_claims(&claims, NOW).is_ok());
+        assert!(config[0].check_claims(&claims, NOW).is_ok());
     }
 
     #[test]
@@ -1223,7 +1192,7 @@ mod tests {
             let mut claims = claims();
             claims.insert(claim.into(), value);
             assert_eq!(
-                config.providers[0].check_claims(&claims, NOW),
+                config[0].check_claims(&claims, NOW),
                 Err(AuthError::Unauthorized(expected.to_string())),
                 "{claim}"
             );
@@ -1234,7 +1203,7 @@ mod tests {
     fn check_claims_tolerates_clock_skew() {
         let config = config(ISSUER, json!([{ "ref": "refs/heads/main" }]));
         assert!(
-            config.providers[0]
+            config[0]
                 .check_claims(&claims(), NOW + 300 + LEEWAY_SECS)
                 .is_ok()
         );
@@ -1244,7 +1213,7 @@ mod tests {
     fn check_claims_forbids_when_no_set_matches() {
         let config = config(ISSUER, json!([{ "ref": "refs/heads/release" }]));
         assert_eq!(
-            config.providers[0].check_claims(&claims(), NOW),
+            config[0].check_claims(&claims(), NOW),
             Err(AuthError::Forbidden(format!(
                 "repo:example-org/app:ref:refs/heads/main: no claim set for {ISSUER} matched"
             )))

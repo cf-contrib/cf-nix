@@ -1,21 +1,42 @@
 mod service;
 
-use axum::response::Response as HttpResponse;
-use cf_nix_cache_sdk::v1;
+use std::sync::Arc;
+
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{IntoResponse, Response as HttpResponse},
+};
+use cf_nix_cache_sdk::v1::{self, ErrorCode};
 use tower_service::Service;
 use worker::*;
 
-use crate::service::{handler::CacheServiceHandler, layer::AuthorizeLayer};
+use crate::service::{config::Config, handler::CacheServiceHandler, layer::AuthorizeLayer};
 
 #[event(fetch)]
 async fn fetch(req: HttpRequest, env: Env, _ctx: Context) -> Result<HttpResponse> {
-    // The router checks each request against the spec before it reaches a
-    // handler. Reads are public; the auth layer authorizes every upload first,
-    // before its body is read.
-    let mut router = v1::cache_service_api_router(CacheServiceHandler::new(env.clone()))
-        .layer(AuthorizeLayer::new(env))
-        // Merged after the layer, so outside it. Not in the spec: they're for
-        // whoever deploys the Worker, not its clients.
-        .merge(v1::HealthHandler::new().into_router());
+    let mut router = match Config::from_env(&env) {
+        // The router checks each request against the spec before it reaches
+        // a handler. Reads are public; the auth layer authorizes every upload
+        // first, before its body is read.
+        Ok(config) => {
+            let config = Arc::new(config);
+            v1::cache_service_api_router(CacheServiceHandler::new(config.clone()))
+                .layer(AuthorizeLayer::new(config))
+                // Merged after the layer, so outside it. Not in the spec:
+                // they're for whoever deploys the Worker, not its clients.
+                .merge(v1::HealthHandler::new().into_router())
+        }
+        // Misconfigured, the Worker serves nothing: every request, the health
+        // endpoints' too, is refused, with why logged.
+        Err(err) => {
+            let msg = err.to_string();
+            axum::Router::new().fallback(move || async move {
+                console_error!("misconfigured: {msg}");
+                let body = v1::Error::new(ErrorCode::Misconfigured, "the cache is misconfigured");
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+            })
+        }
+    };
     Ok(router.call(req).await?)
 }
