@@ -14,14 +14,14 @@ info:
     name: MIT
 
 tags:
-  - name: cache
+  - name: CacheService
     description: The Nix binary cache protocol.
 
 paths:
   /nix-cache-info:
     get:
       operationId: getNixCacheInfo
-      tags: [cache]
+      tags: [CacheService]
       summary: Cache metadata
       description: The store directory, priority and mass-query support, in the format Nix reads.
       responses:
@@ -35,7 +35,7 @@ paths:
   /:
     post:
       operationId: postMassQuery
-      tags: [cache]
+      tags: [CacheService]
       summary: Mass query
       description: |
         Takes a newline-separated list of store path hashes and returns the
@@ -66,7 +66,7 @@ paths:
           type: string
     head:
       operationId: headNarInfo
-      tags: [cache]
+      tags: [CacheService]
       summary: Check for a narinfo
       description: Lets an uploader skip store paths the cache already has.
       responses:
@@ -78,7 +78,7 @@ paths:
           description: The bucket couldn't be read.
     get:
       operationId: getNarInfo
-      tags: [cache]
+      tags: [CacheService]
       summary: Get a narinfo
       description: |
         The narinfo for a store path, as it was uploaded, with a `Sig:` line if
@@ -96,7 +96,7 @@ paths:
           $ref: "#/components/responses/InternalServerError"
     put:
       operationId: putNarInfo
-      tags: [cache]
+      tags: [CacheService]
       summary: Upload a narinfo
       description: |
         Parses and validates the narinfo, and requires its `StorePath` to match
@@ -104,8 +104,6 @@ paths:
         with `CF_NIX_CACHE_API_SECRET`, and rejects it when no key is set.
       security:
         - basic: []
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
       requestBody:
         required: true
         content:
@@ -136,7 +134,7 @@ paths:
           type: string
     head:
       operationId: headNar
-      tags: [cache]
+      tags: [CacheService]
       summary: Check for a NAR
       description: Lets an uploader skip NARs the cache already has.
       responses:
@@ -148,7 +146,7 @@ paths:
           description: The bucket couldn't be read.
     get:
       operationId: getNar
-      tags: [cache]
+      tags: [CacheService]
       summary: Get a NAR
       description: The NAR archive a narinfo's `URL` points at.
       responses:
@@ -165,15 +163,13 @@ paths:
           $ref: "#/components/responses/InternalServerError"
     put:
       operationId: putNar
-      tags: [cache]
+      tags: [CacheService]
       summary: Upload a NAR
       description: |
         Stores a NAR archive. Compressed NARs aren't supported: upload with
         `?compression=none`.
       security:
         - basic: []
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
       requestBody:
         required: true
         content:
@@ -202,17 +198,6 @@ components:
       description: |
         An OIDC token from an issuer the Worker trusts, as the password. The
         username isn't read.
-
-  parameters:
-    # Declared as a parameter, not only as `security`, so the server is handed
-    # the header to authorize with.
-    Authorization:
-      name: Authorization
-      in: header
-      required: false
-      description: "`Basic` credentials: see the `basic` security scheme."
-      schema:
-        type: string
 
   responses:
     BadRequest:

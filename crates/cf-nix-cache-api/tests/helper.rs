@@ -74,6 +74,19 @@ pub fn client() -> HttpClient {
     HttpClient::new().with_base_url(BASE_URL)
 }
 
+/// The SDK's client, sending `authorization` with every request, if given.
+pub fn client_with(authorization: Option<String>) -> HttpClient {
+    match authorization {
+        Some(authorization) => client().with_header("authorization", authorization),
+        None => client(),
+    }
+}
+
+/// A client that may upload: it sends `credentials()`.
+pub fn uploader() -> HttpClient {
+    client_with(Some(credentials()))
+}
+
 /// Claims the dev config lets upload. Change one to make a token it doesn't.
 pub fn claims() -> Value {
     let now = SystemTime::now()
@@ -112,8 +125,8 @@ pub fn basic(username: &str, password: &str) -> String {
 }
 
 /// Credentials that may upload: a token with `claims()`, as Nix sends it.
-pub fn uploader() -> Option<String> {
-    Some(basic("oidc", &token(&claims())))
+pub fn credentials() -> String {
+    basic("oidc", &token(&claims()))
 }
 
 /// Reads a file from `tests/fixture`.
@@ -134,14 +147,15 @@ pub async fn put(path: &str, content_type: &str, body: Vec<u8>) -> reqwest::Resp
     reqwest::Client::new()
         .put(format!("{BASE_URL}/{path}"))
         .header("content-type", content_type)
-        .header("authorization", uploader().unwrap())
+        .header("authorization", credentials())
         .body(body)
         .send()
         .await
         .expect("the request failed")
 }
 
-/// Held by every test that uploads the `j5m1…` narinfo. Tests run in
-/// parallel, and one's upload would replace what another is about to read
-/// back.
-pub static NARINFO_LOCK: Mutex<()> = Mutex::const_new(());
+/// Held by every test that sends a `PUT`, so uploads run one at a time.
+/// `wrangler dev` drops connections when several arrive at once ("Network
+/// connection lost"), and tests that upload the same narinfo would replace
+/// what another is about to read back. Reads still run in parallel.
+pub static UPLOADS: Mutex<()> = Mutex::const_new(());

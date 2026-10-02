@@ -91,11 +91,11 @@ run "signing_key_from_secrets_store" {
   }
 }
 
-run "oidc_issuers" {
+run "oidc_providers" {
   command = plan
 
   variables {
-    oidc_issuers = [
+    oidc_providers = [
       {
         issuer = "https://token.actions.githubusercontent.com"
         claims = [{ repository_owner_id = "100000001", ref = "refs/heads/main" }]
@@ -111,7 +111,7 @@ run "oidc_issuers" {
 
   assert {
     condition = { for b in cloudflare_worker_version.this.bindings : b.name => jsondecode(b.text) if b.type == "plain_text" } == {
-      CF_NIX_CACHE_API_OIDC_ISSUERS = [
+      CF_NIX_CACHE_API_OIDC_PROVIDERS = [
         {
           issuer   = "https://token.actions.githubusercontent.com"
           audience = "https://cf-nix-cache.example.workers.dev"
@@ -125,16 +125,16 @@ run "oidc_issuers" {
         },
       ]
     }
-    error_message = "the issuers should be bound, the audience defaulting to the cache URL and an unset jwks_uri left out"
+    error_message = "the providers should be bound, the audience defaulting to the cache URL and an unset jwks_uri left out"
   }
 }
 
-run "uploads_off_without_issuers" {
+run "uploads_off_without_providers" {
   command = plan
 
   assert {
-    condition     = length([for b in cloudflare_worker_version.this.bindings : b if b.name == "CF_NIX_CACHE_API_OIDC_ISSUERS"]) == 0
-    error_message = "without issuers, no auth binding should be created"
+    condition     = length([for b in cloudflare_worker_version.this.bindings : b if b.name == "CF_NIX_CACHE_API_OIDC_PROVIDERS"]) == 0
+    error_message = "without providers, no auth binding should be created"
   }
 }
 
@@ -142,23 +142,23 @@ run "github_claims_must_pin_the_owner" {
   command = plan
 
   variables {
-    oidc_issuers = [{
+    oidc_providers = [{
       issuer = "https://token.actions.githubusercontent.com"
       claims = [{ ref = "refs/heads/main" }]
     }]
   }
 
-  expect_failures = [var.oidc_issuers]
+  expect_failures = [var.oidc_providers]
 }
 
 run "issuers_need_claims" {
   command = plan
 
   variables {
-    oidc_issuers = [{ issuer = "https://issuer.example.com", claims = [] }]
+    oidc_providers = [{ issuer = "https://issuer.example.com", claims = [] }]
   }
 
-  expect_failures = [var.oidc_issuers]
+  expect_failures = [var.oidc_providers]
 }
 
 run "custom_domain" {
