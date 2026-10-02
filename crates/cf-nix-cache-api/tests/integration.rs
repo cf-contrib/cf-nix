@@ -3,9 +3,9 @@
 mod helper;
 
 use cf_nix_cache_sdk::v1::{
-    ApiOpError, Error, ErrorCode, GetNarApiError, GetNarInfoApiError, GetWhoamiApiError,
-    IdentityKind, PutNarInfoApiError,
+    ApiOpError, Error, ErrorCode, GetNarApiError, GetNarInfoApiError, PutNarInfoApiError,
 };
+use serde_json::{Value, json};
 
 const NARINFO: &str = "j5m1qd2dbsmhq0mw13yb8wijnm3pq4z0";
 const NAR: &str = "j5m1qd2dbsmhq0mw13yb8wijnm3pq4z0";
@@ -179,65 +179,80 @@ async fn test_put_rejects_undeclared_content_type() {
     assert_eq!(resp.status(), 415);
 }
 
-#[tokio::test]
-async fn test_whoami_with_github_token() {
-    let identity = helper::client()
-        .get_whoami(helper::uploader())
-        .await
-        .expect("the request failed");
-    assert_eq!(identity.kind, IdentityKind::Users);
-    assert!(!identity.subject.is_empty());
-}
-
-#[tokio::test]
-async fn test_whoami_without_credentials() {
+/// Uploads the fixture narinfo with `authorization`, and returns the
+/// rejection's status and body.
+async fn rejected(authorization: Option<String>) -> (u16, Option<Error>) {
     let err = helper::client()
-        .get_whoami(None::<String>)
+        .put_nar_info(NARINFO, authorization, narinfo_fixture(NARINFO))
         .await
-        .unwrap_err();
-    assert_eq!(status(&err), 401);
-}
-
-#[tokio::test]
-async fn test_whoami_with_oidc_disabled() {
-    // The dev config only sets CF_NIX_WORKER_GITHUB_REPOSITORY, so OIDC auth is off.
-    let err = helper::client()
-        .get_whoami(Some(helper::basic("actions", "a.b.c")))
-        .await
-        .unwrap_err();
-    let Some(GetWhoamiApiError::Status401(body)) = err.api().and_then(|api| api.typed.clone())
-    else {
-        panic!("expected a 401: {err:?}");
+        .expect_err("the upload should be refused");
+    let body = match err.api().and_then(|api| api.typed.clone()) {
+        Some(PutNarInfoApiError::Status401(body) | PutNarInfoApiError::Status403(body)) => {
+            Some(body)
+        }
+        _ => None,
     };
-    assert_eq!(body.error, ErrorCode::Unauthorized);
-    assert_eq!(body.message, "actions auth is not enabled");
+    (status(&err), body)
+}
+
+/// A token from the test issuer with `claim` changed.
+fn token_with(claim: &str, value: Value) -> Option<String> {
+    let mut claims = helper::claims();
+    claims[claim] = value;
+    Some(helper::basic("oidc", &helper::token(&claims)))
 }
 
 #[tokio::test]
 async fn test_put_rejects_bad_credentials() {
-    let client = helper::client();
-    let data = narinfo_fixture(NARINFO);
-
-    for credentials in [
+    for authorization in [
         None,
-        Some(("users", "gho_notARealToken000000000000000000000")),
-        Some(("github", "gho_notARealToken000000000000000000000")),
-        Some(("x-auth-token", "nix-token-dev")),
-        Some(("someone", "secret")),
+        Some("Bearer abc".to_string()),
+        Some(helper::basic("oidc", "not-a-jwt")),
     ] {
-        let authorization = credentials.map(|(user, password)| helper::basic(user, password));
-        let err = client
-            .put_nar_info(NARINFO, authorization, data.clone())
-            .await
-            .unwrap_err();
-        assert!(
-            matches!(
-                err.api().and_then(|api| api.typed.as_ref()),
-                Some(PutNarInfoApiError::Status401(_))
-            ),
-            "{credentials:?}: {err:?}"
-        );
+        let (status, body) = rejected(authorization.clone()).await;
+        assert_eq!(status, 401, "{authorization:?}");
+        assert_eq!(body.map(|body| body.error), Some(ErrorCode::Unauthorized));
     }
+}
+
+#[tokio::test]
+async fn test_put_says_why_a_token_is_refused() {
+    let now = helper::claims()["iat"].as_u64().unwrap();
+    for (claim, value, expected) in [
+        (
+            "iss",
+            json!("https://other.example.com"),
+            "issuer https://other.example.com is not configured".to_string(),
+        ),
+        (
+            "aud",
+            json!("https://wrong.example.com"),
+            format!(
+                "token audience is https://wrong.example.com, expected {}",
+                helper::BASE_URL
+            ),
+        ),
+        ("exp", json!(now - 3600), "token expired".to_string()),
+    ] {
+        let (status, body) = rejected(token_with(claim, value)).await;
+        assert_eq!(status, 401, "{claim}");
+        assert_eq!(body.map(|body| body.message), Some(expected), "{claim}");
+    }
+}
+
+#[tokio::test]
+async fn test_put_forbids_a_token_no_claim_set_allows() {
+    let (status, body) = rejected(token_with("ref", json!("refs/heads/dev"))).await;
+    assert_eq!(status, 403);
+    let body = body.expect("a JSON error");
+    assert_eq!(body.error, ErrorCode::Forbidden);
+    assert_eq!(
+        body.message,
+        format!(
+            "repo:example-org/app:ref:refs/heads/main: no claim set for {} matched",
+            helper::ISSUER
+        )
+    );
 }
 
 #[tokio::test]

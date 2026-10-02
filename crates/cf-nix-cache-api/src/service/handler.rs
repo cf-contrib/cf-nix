@@ -1,8 +1,7 @@
 //! Handler implementations for the generated API traits.
 //!
-//! Every operation of both services is implemented: the Nix binary cache
-//! protocol in [`CacheServiceHandler`], `GET /v1/whoami` in
-//! [`AuthServiceHandler`].
+//! Every operation of the Nix binary cache protocol is implemented, in
+//! [`CacheServiceHandler`].
 //!
 //! # Send
 //!
@@ -22,13 +21,13 @@
 //! # Uploads
 //!
 //! The spec hands each upload its `Authorization` header, and the method
-//! authorizes before anything else, logging the identity it resolved to.
+//! authorizes before anything else, logging the identity it resolved to: the
+//! token's subject and issuer, and the claim set that let it in.
 
 use std::fmt::Write;
 
 use cf_nix_cache_sdk::v1::{
-    self, AuthApi, CacheApi, ErrorCode, NarInfo, NarInfoContext, NarInfoSigKey, Validate,
-    append_sig,
+    self, CacheApi, ErrorCode, NarInfo, NarInfoContext, NarInfoSigKey, Validate, append_sig,
 };
 use worker::{Data, Env, Error, Result, console_error, console_log, send::SendFuture};
 
@@ -165,7 +164,7 @@ impl CacheApi for CacheServiceHandler {
             }
 
             // Stored narinfo must always carry a Sig:. If the uploader didn't
-            // provide one, sign with CF_NIX_WORKER_SECRET; if neither path
+            // provide one, sign with CF_NIX_CACHE_API_SECRET; if neither path
             // produces a signature, reject. The text is stored as Nix sent it,
             // so no field is dropped or reordered.
             let signing_failure = || {
@@ -181,12 +180,12 @@ impl CacheApi for CacheServiceHandler {
                     Ok(Some(secret)) => secret,
                     Ok(None) => {
                         return bad_request(
-                            "narinfo must be signed: no Sig: provided and CF_NIX_WORKER_SECRET is not configured"
+                            "narinfo must be signed: no Sig: provided and CF_NIX_CACHE_API_SECRET is not configured"
                                 .to_string(),
                         );
                     }
                     Err(err) => {
-                        console_error!("reading CF_NIX_WORKER_SECRET failed: {err}");
+                        console_error!("reading CF_NIX_CACHE_API_SECRET failed: {err}");
                         return signing_failure();
                     }
                 };
@@ -255,37 +254,6 @@ impl CacheApi for CacheServiceHandler {
             match write(&self.env, format!("{hash}.nar"), body.to_vec()).await {
                 Ok(()) => v1::PutNarResponse::Ok,
                 Err(err) => v1::PutNarResponse::InternalServerError(bucket_error(err)),
-            }
-        })
-        .await
-    }
-}
-
-/// Credential checks.
-#[derive(Clone)]
-pub struct AuthServiceHandler {
-    env: Env,
-}
-
-impl AuthServiceHandler {
-    /// Creates a handler over the Worker's bindings.
-    pub fn new(env: Env) -> Self {
-        Self { env }
-    }
-}
-
-#[async_trait::async_trait]
-impl AuthApi for AuthServiceHandler {
-    /// GET /v1/whoami
-    ///
-    /// Resolves the request's credentials the same way as an upload and
-    /// returns the identity, so clients can check their setup before a
-    /// `nix copy`.
-    async fn get_whoami(&self, authorization: Option<String>) -> v1::GetWhoamiResponse {
-        SendFuture::new(async move {
-            match auth::authorize(authorization.as_deref(), &self.env).await {
-                Ok(identity) => v1::GetWhoamiResponse::Ok(identity.into()),
-                Err(err) => err.into(),
             }
         })
         .await

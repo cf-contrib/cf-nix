@@ -5,7 +5,7 @@ variable "account_id" {
 
 variable "hostname" {
   type        = string
-  description = "The cache's hostname, which is also the default OIDC audience: <worker_name>.<subdomain>.workers.dev, or a custom domain such as nix-cache.example.com (needs zone_id)."
+  description = "The cache's hostname, whose URL is also the default OIDC audience: <worker_name>.<subdomain>.workers.dev, or a custom domain such as nix-cache.example.com (needs zone_id)."
 
   validation {
     condition     = can(regex("^[a-z0-9-]+(\\.[a-z0-9-]+)+$", var.hostname))
@@ -54,32 +54,26 @@ variable "signing_key_secret" {
   default     = null
 }
 
-variable "github_repository" {
-  type        = string
-  description = "owner/repo. GitHub users with push access to it can upload with their own GitHub token. null turns this off."
-  default     = null
-}
-
-variable "github_owner_id" {
-  type        = string
-  description = "Numeric ID of the GitHub org or user whose repos may upload from GitHub Actions (gh api orgs/<org> --jq .id). Required with github_oidc_rules."
-  default     = null
-}
-
-variable "github_oidc_audience" {
-  type        = string
-  description = "Expected aud of GitHub Actions OIDC tokens. Defaults to the cache URL, which is what the action requests."
-  default     = null
-}
-
-variable "github_oidc_rules" {
-  type        = list(map(string))
-  description = "GitHub Actions OIDC claim rules; a token is accepted if any rule matches. Empty turns OIDC off."
+variable "oidc_issuers" {
+  type = list(object({
+    issuer   = string
+    audience = optional(string)
+    jwks_uri = optional(string)
+    claims   = list(map(string))
+  }))
+  description = "OIDC issuers whose tokens may upload. A token is accepted if any claim set of its issuer matches. audience defaults to the cache URL; jwks_uri to what the issuer's discovery document says. Empty turns uploads off."
   default     = []
 
   validation {
-    condition     = length(var.github_oidc_rules) == 0 || var.github_owner_id != null
-    error_message = "github_oidc_rules needs github_owner_id."
+    condition     = alltrue([for i in var.oidc_issuers : length(i.claims) > 0 && alltrue([for c in i.claims : length(c) > 0])])
+    error_message = "Every issuer needs at least one claim set, and no claim set may be empty."
+  }
+
+  validation {
+    condition = alltrue([
+      for i in var.oidc_issuers : i.issuer != "https://token.actions.githubusercontent.com" || alltrue([for c in i.claims : contains(keys(c), "repository_owner_id")])
+    ])
+    error_message = "Every claim set for GitHub Actions must pin repository_owner_id: GitHub gives a token for any audience to any repository on github.com."
   }
 }
 

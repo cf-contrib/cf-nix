@@ -6,9 +6,10 @@ compatibility_date = "2026-05-14"
 command = "worker-build --dev"
 
 [[r2_buckets]]
-binding = "CF_NIX_WORKER_BUCKET"
+binding = "CF_NIX_CACHE_API_BUCKET"
 bucket_name = "nix-bucket-dev"
 
 [vars]
-# Uploads in local dev need a GitHub token with push access to this repo.
-CF_NIX_WORKER_GITHUB_REPOSITORY = "cf-contrib/cf-nix-cache"
+# Uploads in local dev take tokens from the integration tests' issuer, which
+# they serve on 127.0.0.1:8788 while they run.
+CF_NIX_CACHE_API_OIDC_ISSUERS = '[{"issuer":"http://127.0.0.1:8788","audience":"http://127.0.0.1:8787","claims":[{"repository_owner_id":"100000001","ref":"refs/heads/main"}]}]'

@@ -7,8 +7,8 @@ use super::{AuthError, Identity};
 /// Per-isolate cache of auth results, keyed by the SHA-256 of the credential
 /// so raw tokens are never stored.
 ///
-/// Holds refusals (`401` / `403`) as well as identities, so a bad credential
-/// doesn't hit GitHub on every request either.
+/// Holds refusals (`403`) as well as identities, so a token no claim set
+/// allows isn't verified again on every request either.
 pub(super) struct IdentityCache {
     entries: HashMap<[u8; 32], (u64, Result<Identity, AuthError>)>,
 }
@@ -56,13 +56,12 @@ impl IdentityCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::IdentityKind;
 
     fn identity() -> Result<Identity, AuthError> {
         Ok(Identity {
-            kind: IdentityKind::Users,
-            subject: "octocat".to_string(),
-            rule: None,
+            issuer: "https://issuer.example.com".to_string(),
+            subject: "repo:example-org/app:ref:refs/heads/main".to_string(),
+            claims: 0,
         })
     }
 
@@ -79,7 +78,7 @@ mod tests {
     fn identity_cache_holds_refusals() {
         let mut cache = IdentityCache::new();
         let key = IdentityCache::key("token");
-        let refused = Err(AuthError::Forbidden("no push access".to_string()));
+        let refused = Err(AuthError::Forbidden("no claim set matched".to_string()));
         cache.insert(key, refused.clone(), 100, 0);
         assert_eq!(cache.get(&key, 0), Some(refused));
     }

@@ -2,14 +2,15 @@ locals {
   custom_domain = !endswith(var.hostname, ".workers.dev")
   url           = "https://${var.hostname}"
 
-  oidc = length(var.github_oidc_rules) > 0
-
-  # Upload auth: a mechanism is on only when its bindings exist.
+  # Upload auth: off unless an issuer is configured. Unset optional fields are
+  # left out rather than sent as null.
   auth_vars = {
-    CF_NIX_WORKER_GITHUB_REPOSITORY    = var.github_repository
-    CF_NIX_WORKER_GITHUB_OWNER_ID      = local.oidc ? var.github_owner_id : null
-    CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE = local.oidc ? coalesce(var.github_oidc_audience, local.url) : null
-    CF_NIX_WORKER_GITHUB_OIDC_RULES    = local.oidc ? jsonencode(var.github_oidc_rules) : null
+    CF_NIX_CACHE_API_OIDC_ISSUERS = length(var.oidc_issuers) == 0 ? null : jsonencode([
+      for i in var.oidc_issuers : merge(
+        { issuer = i.issuer, audience = coalesce(i.audience, local.url), claims = i.claims },
+        i.jwks_uri == null ? {} : { jwks_uri = i.jwks_uri },
+      )
+    ])
   }
 }
 
@@ -57,7 +58,7 @@ resource "cloudflare_worker_version" "this" {
   bindings = concat(
     [
       {
-        name        = "CF_NIX_WORKER_BUCKET"
+        name        = "CF_NIX_CACHE_API_BUCKET"
         type        = "r2_bucket"
         bucket_name = cloudflare_r2_bucket.this.name
       },
@@ -65,7 +66,7 @@ resource "cloudflare_worker_version" "this" {
     # Only ever from Secrets Store, so the signing key never enters Terraform state.
     var.signing_key_secret == null ? [] : [
       {
-        name        = "CF_NIX_WORKER_SECRET"
+        name        = "CF_NIX_CACHE_API_SECRET"
         type        = "secrets_store_secret"
         store_id    = var.signing_key_secret.secret_store_id
         secret_name = var.signing_key_secret.secret_name
