@@ -19,7 +19,7 @@
 //! # Uploads
 //!
 //! No method authorizes: by the time an upload reaches one, the auth
-//! [`middleware`](super::middleware) has.
+//! [`layer`](super::layer) has.
 
 use std::fmt::Write;
 
@@ -28,7 +28,11 @@ use cf_nix_cache_sdk::v1::{
 };
 use worker::{Env, Error, console_error, send::SendFuture};
 
-use crate::{BUCKET, error, signing_secret};
+/// The binding of the R2 bucket every narinfo and NAR is stored in.
+const BUCKET_KEY: &str = "CF_NIX_CACHE_API_BUCKET";
+
+/// The binding of the narinfo signing key.
+const SECRET_KEY: &str = "CF_NIX_CACHE_API_SECRET";
 
 /// The Nix binary cache protocol, over the R2 bucket.
 #[derive(Clone)]
@@ -40,6 +44,22 @@ impl CacheServiceHandler {
     /// Creates a handler over the Worker's bindings.
     pub fn new(env: Env) -> Self {
         Self { env }
+    }
+
+    /// Reads the narinfo signing key, `CF_NIX_CACHE_API_SECRET`.
+    ///
+    /// Deployments bind it from Secrets Store, so the key never passes
+    /// through Terraform. `wrangler dev` and plain `secret_text` bindings are
+    /// read as a var.
+    async fn signing_secret(&self) -> worker::Result<Option<String>> {
+        if let Ok(store) = self.env.secret_store(SECRET_KEY) {
+            return store.get().await;
+        }
+        Ok(self
+            .env
+            .var(SECRET_KEY)
+            .ok()
+            .map(|secret| secret.to_string()))
     }
 }
 
@@ -63,7 +83,7 @@ impl CacheServiceApi for CacheServiceHandler {
     async fn post_mass_query(&self, body: String) -> v1::PostMassQueryResponse {
         SendFuture::new(async move {
             let found = async {
-                let bucket = self.env.bucket(BUCKET)?;
+                let bucket = self.env.bucket(BUCKET_KEY)?;
                 let mut data = String::new();
                 for hash in body.lines() {
                     let key = if hash.ends_with(".narinfo") {
@@ -81,7 +101,7 @@ impl CacheServiceApi for CacheServiceHandler {
 
             match found.await {
                 Ok(data) => v1::PostMassQueryResponse::Ok(data),
-                Err(_) => v1::PostMassQueryResponse::InternalServerError(error(
+                Err(_) => v1::PostMassQueryResponse::InternalServerError(v1::Error::new(
                     ErrorCode::InternalError,
                     "the bucket couldn't be read or written",
                 )),
@@ -95,7 +115,7 @@ impl CacheServiceApi for CacheServiceHandler {
         SendFuture::new(async move {
             let head = async {
                 self.env
-                    .bucket(BUCKET)?
+                    .bucket(BUCKET_KEY)?
                     .head(format!("{hash}.narinfo"))
                     .await
             };
@@ -119,7 +139,7 @@ impl CacheServiceApi for CacheServiceHandler {
             // Served as stored: the text Nix uploaded, plus a Sig: line if the
             // Worker signed it.
             let read = async {
-                let bucket = self.env.bucket(BUCKET)?;
+                let bucket = self.env.bucket(BUCKET_KEY)?;
                 let Some(object) = bucket.get(format!("{hash}.narinfo")).execute().await? else {
                     return Ok(None);
                 };
@@ -133,13 +153,13 @@ impl CacheServiceApi for CacheServiceHandler {
             let mut data = match read.await {
                 Ok(Some(data)) => data,
                 Ok(None) => {
-                    return v1::GetNarInfoResponse::NotFound(error(
+                    return v1::GetNarInfoResponse::NotFound(v1::Error::new(
                         ErrorCode::NotFound,
                         "object not found",
                     ));
                 }
                 Err(_) => {
-                    return v1::GetNarInfoResponse::InternalServerError(error(
+                    return v1::GetNarInfoResponse::InternalServerError(v1::Error::new(
                         ErrorCode::InternalError,
                         "the bucket couldn't be read or written",
                     ));
@@ -164,7 +184,7 @@ impl CacheServiceApi for CacheServiceHandler {
     async fn put_nar_info(&self, hash: String, body: String) -> v1::PutNarInfoResponse {
         SendFuture::new(async move {
             let bad_request =
-                |msg: String| v1::PutNarInfoResponse::BadRequest(error(ErrorCode::BadRequest, msg));
+                |msg: String| v1::PutNarInfoResponse::BadRequest(v1::Error::new(ErrorCode::BadRequest, msg));
             let info = match NarInfo::parse(&body) {
                 Ok(info) => info,
                 Err(msg) => return bad_request(msg),
@@ -179,7 +199,7 @@ impl CacheServiceApi for CacheServiceHandler {
             // produces a signature, reject. The text is stored as Nix sent it,
             // so no field is dropped or reordered.
             let signing_failure = || {
-                v1::PutNarInfoResponse::InternalServerError(error(
+                v1::PutNarInfoResponse::InternalServerError(v1::Error::new(
                     ErrorCode::Misconfigured,
                     "server signing failure",
                 ))
@@ -187,16 +207,17 @@ impl CacheServiceApi for CacheServiceHandler {
             let data = if !info.sigs.is_empty() {
                 body
             } else {
-                let secret = match signing_secret(&self.env).await {
+                let secret = match self.signing_secret().await {
                     Ok(Some(secret)) => secret,
                     Ok(None) => {
                         return bad_request(
-                            "narinfo must be signed: no Sig: provided and CF_NIX_CACHE_API_SECRET is not configured"
-                                .to_string(),
+                            format!(
+                                "narinfo must be signed: no Sig: provided and {SECRET_KEY} is not configured"
+                            ),
                         );
                     }
                     Err(err) => {
-                        console_error!("reading CF_NIX_CACHE_API_SECRET failed: {err}");
+                        console_error!("reading {SECRET_KEY} failed: {err}");
                         return signing_failure();
                     }
                 };
@@ -210,12 +231,12 @@ impl CacheServiceApi for CacheServiceHandler {
             };
 
             let write = async {
-                let bucket = self.env.bucket(BUCKET)?;
+                let bucket = self.env.bucket(BUCKET_KEY)?;
                 bucket.put(format!("{hash}.narinfo"), data).execute().await
             };
             match write.await {
                 Ok(_) => v1::PutNarInfoResponse::Ok,
-                Err(_) => v1::PutNarInfoResponse::InternalServerError(error(ErrorCode::InternalError, "the bucket couldn't be read or written")),
+                Err(_) => v1::PutNarInfoResponse::InternalServerError(v1::Error::new(ErrorCode::InternalError, "the bucket couldn't be read or written")),
             }
         })
         .await
@@ -224,7 +245,12 @@ impl CacheServiceApi for CacheServiceHandler {
     /// HEAD /nar/:hash.nar — used by Nix uploaders to skip already-cached NARs.
     async fn head_nar(&self, hash: String) -> v1::HeadNarResponse {
         SendFuture::new(async move {
-            let head = async { self.env.bucket(BUCKET)?.head(format!("{hash}.nar")).await };
+            let head = async {
+                self.env
+                    .bucket(BUCKET_KEY)?
+                    .head(format!("{hash}.nar"))
+                    .await
+            };
             match head.await {
                 Ok(Some(_)) => v1::HeadNarResponse::Ok,
                 Ok(None) => v1::HeadNarResponse::NotFound,
@@ -242,7 +268,7 @@ impl CacheServiceApi for CacheServiceHandler {
     async fn get_nar(&self, hash: String) -> v1::GetNarResponse {
         SendFuture::new(async move {
             let read = async {
-                let bucket = self.env.bucket(BUCKET)?;
+                let bucket = self.env.bucket(BUCKET_KEY)?;
                 let Some(object) = bucket.get(format!("{hash}.nar")).execute().await? else {
                     return Ok(None);
                 };
@@ -253,10 +279,11 @@ impl CacheServiceApi for CacheServiceHandler {
             };
             match read.await {
                 Ok(Some(data)) => v1::GetNarResponse::Ok(data.into()),
-                Ok(None) => {
-                    v1::GetNarResponse::NotFound(error(ErrorCode::NotFound, "object not found"))
-                }
-                Err(_) => v1::GetNarResponse::InternalServerError(error(
+                Ok(None) => v1::GetNarResponse::NotFound(v1::Error::new(
+                    ErrorCode::NotFound,
+                    "object not found",
+                )),
+                Err(_) => v1::GetNarResponse::InternalServerError(v1::Error::new(
                     ErrorCode::InternalError,
                     "the bucket couldn't be read or written",
                 )),
@@ -273,7 +300,7 @@ impl CacheServiceApi for CacheServiceHandler {
     async fn put_nar(&self, hash: String, body: bytes::Bytes) -> v1::PutNarResponse {
         SendFuture::new(async move {
             let write = async {
-                let bucket = self.env.bucket(BUCKET)?;
+                let bucket = self.env.bucket(BUCKET_KEY)?;
                 bucket
                     .put(format!("{hash}.nar"), body.to_vec())
                     .execute()
@@ -281,7 +308,7 @@ impl CacheServiceApi for CacheServiceHandler {
             };
             match write.await {
                 Ok(_) => v1::PutNarResponse::Ok,
-                Err(_) => v1::PutNarResponse::InternalServerError(error(
+                Err(_) => v1::PutNarResponse::InternalServerError(v1::Error::new(
                     ErrorCode::InternalError,
                     "the bucket couldn't be read or written",
                 )),

@@ -1,12 +1,12 @@
-//! Upload auth, as axum middleware: every `PUT` needs an OIDC token from a
+//! Upload auth, as a tower layer: every `PUT` needs an OIDC token from a
 //! provider `CF_NIX_CACHE_API_OIDC_PROVIDERS` names, as the password of HTTP
 //! Basic credentials, since a netrc file is the only place Nix sends them from.
 //! The username isn't read.
 //!
-//! [`authorize`] is layered over the API's routes in the crate root. It runs
-//! before the request reaches its handler, and so before the body is read: an
-//! upload without credentials is refused without buffering it. Reads pass
-//! straight through.
+//! [`AuthorizeLayer`] is layered over the API's routes in the crate root. It
+//! runs before the request reaches its handler, and so before the body is
+//! read: an upload without credentials is refused without buffering it. Reads
+//! pass straight through.
 //!
 //! OIDC auth, for any issuer: GitHub Actions, Cloudflare Access, GitLab, or
 //! a broker that issues its own tokens.
@@ -20,23 +20,28 @@
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap},
+    convert::Infallible,
     fmt,
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
 };
 
 use axum::{
     Json,
-    extract::{Request, State},
+    extract::Request,
     http::{Method, StatusCode, header::AUTHORIZATION},
-    middleware::Next,
     response::{IntoResponse, Response},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use cf_nix_cache_sdk::v1::ErrorCode;
+use cf_nix_cache_sdk::v1::{self, ErrorCode};
 use http_auth_basic::Credentials;
 use http_body_util::BodyExt;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use tower_layer::Layer;
+use tower_service::Service;
 use web_sys::{CryptoKey, WorkerGlobalScope};
 use worker::{
     Date, Env, Fetch, console_error, console_log,
@@ -46,10 +51,8 @@ use worker::{
     wasm_bindgen_futures::JsFuture,
 };
 
-use crate::error;
-
-/// The binding the providers are configured in.
-const VAR: &str = "CF_NIX_CACHE_API_OIDC_PROVIDERS";
+/// The binding of the providers whose tokens may upload.
+const PROVIDERS_KEY: &str = "CF_NIX_CACHE_API_OIDC_PROVIDERS";
 
 /// Clock tolerance for `exp` and `nbf`.
 const LEEWAY_SECS: u64 = 60;
@@ -67,45 +70,100 @@ thread_local! {
     static CACHE: RefCell<IdentityCache> = RefCell::new(IdentityCache::new());
 }
 
-/// Authorizes every `PUT`, and logs the identity it resolved to: the token's
-/// subject and issuer, and the claim set that let it in. Every other method
-/// passes through.
-pub async fn authorize(State(env): State<Env>, req: Request, next: Next) -> Response {
-    if req.method() != Method::PUT {
-        return next.run(req).await;
+/// Authorizes every `PUT` before the routes it's layered over, over the
+/// Worker's bindings. Every other method passes through.
+#[derive(Clone)]
+pub struct AuthorizeLayer {
+    env: Env,
+}
+
+impl AuthorizeLayer {
+    /// A layer that reads the providers from `env`.
+    pub fn new(env: Env) -> Self {
+        Self { env }
+    }
+}
+
+impl<S> Layer<S> for AuthorizeLayer {
+    type Service = Authorize<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        Authorize {
+            inner,
+            env: self.env.clone(),
+        }
+    }
+}
+
+/// [`AuthorizeLayer`]'s service: authorizes an upload, logs the identity it
+/// resolved to (the token's subject and issuer, and the claim set that let it
+/// in), then hands the request to the service it wraps.
+#[derive(Clone)]
+pub struct Authorize<S> {
+    inner: S,
+    env: Env,
+}
+
+impl<S> Service<Request> for Authorize<S>
+where
+    S: Service<Request, Response = Response, Error = Infallible> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+{
+    type Response = Response;
+    type Error = Infallible;
+    type Future = Pin<Box<dyn Future<Output = Result<Response, Infallible>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Infallible>> {
+        self.inner.poll_ready(cx)
     }
 
-    // The providers whose tokens may upload. None configured means uploads
-    // are off.
-    let config = match IdentityConfig::from_env(&env) {
-        Ok(Some(config)) => config,
-        Ok(None) => {
-            let err = AuthError::Unauthorized(format!("uploads are off: {VAR} is not set"));
-            return refuse(req, err).await;
-        }
-        Err(err) => return refuse(req, err).await,
-    };
+    fn call(&mut self, req: Request) -> Self::Future {
+        // The service polled ready is the one to call: a clone takes its
+        // place for the next request.
+        let clone = self.inner.clone();
+        let mut inner = std::mem::replace(&mut self.inner, clone);
+        let env = self.env.clone();
 
-    // The token: the password of the request's HTTP Basic credentials.
-    let header = req
-        .headers()
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok());
-    let token = match token(header) {
-        Ok(token) => token,
-        Err(err) => return refuse(req, err).await,
-    };
+        Box::pin(async move {
+            if req.method() != Method::PUT {
+                return inner.call(req).await;
+            }
 
-    // Verifying fetches the issuer's keys, and fetch futures aren't `Send`,
-    // which axum wants; a Worker is single-threaded, so it runs in a
-    // `SendFuture`.
-    let identity = match SendFuture::new(config.verify(&token)).await {
-        Ok(identity) => identity,
-        Err(err) => return refuse(req, err).await,
-    };
+            // The providers whose tokens may upload. None configured means
+            // uploads are off.
+            let config = match IdentityConfig::from_env(&env) {
+                Ok(Some(config)) => config,
+                Ok(None) => {
+                    let err = AuthError::Unauthorized(format!(
+                        "uploads are off: {PROVIDERS_KEY} is not set"
+                    ));
+                    return Ok(refuse(req, err).await);
+                }
+                Err(err) => return Ok(refuse(req, err).await),
+            };
 
-    console_log!("PUT {} by {identity}", req.uri().path());
-    next.run(req).await
+            // The token: the password of the request's HTTP Basic credentials.
+            let header = req
+                .headers()
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok());
+            let token = match token(header) {
+                Ok(token) => token,
+                Err(err) => return Ok(refuse(req, err).await),
+            };
+
+            // Verifying fetches the issuer's keys, and fetch futures aren't
+            // `Send`, which the router wants; a Worker is single-threaded, so
+            // it runs in a `SendFuture`.
+            let identity = match SendFuture::new(config.verify(&token)).await {
+                Ok(identity) => identity,
+                Err(err) => return Ok(refuse(req, err).await),
+            };
+
+            console_log!("PUT {} by {identity}", req.uri().path());
+            inner.call(req).await
+        })
+    }
 }
 
 /// Refuses an upload with `err`, after reading its body a chunk at a time and
@@ -128,15 +186,6 @@ fn token(header: Option<&str>) -> Result<String, AuthError> {
         _ => Err(AuthError::Unauthorized(
             "invalid credentials: send HTTP Basic auth with the token as the password".to_string(),
         )),
-    }
-}
-
-/// Checks that the auth config is valid, for `GET /healthz`.
-pub fn check_config(env: &Env) -> Result<(), String> {
-    match IdentityConfig::from_env(env) {
-        Ok(_) => Ok(()),
-        Err(AuthError::Config(msg)) => Err(msg),
-        Err(err) => Err(format!("{err:?}")),
     }
 }
 
@@ -182,21 +231,24 @@ impl IntoResponse for AuthError {
         let (status, body) = match self {
             AuthError::Unauthorized(msg) => (
                 StatusCode::UNAUTHORIZED,
-                error(ErrorCode::Unauthorized, msg),
+                v1::Error::new(ErrorCode::Unauthorized, msg),
             ),
-            AuthError::Forbidden(msg) => (StatusCode::FORBIDDEN, error(ErrorCode::Forbidden, msg)),
+            AuthError::Forbidden(msg) => (
+                StatusCode::FORBIDDEN,
+                v1::Error::new(ErrorCode::Forbidden, msg),
+            ),
             AuthError::Config(msg) => {
                 console_error!("auth config invalid: {msg}");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    error(ErrorCode::Misconfigured, "auth is misconfigured"),
+                    v1::Error::new(ErrorCode::Misconfigured, "auth is misconfigured"),
                 )
             }
             AuthError::Upstream(msg) => {
                 console_error!("auth upstream failure: {msg}");
                 (
                     StatusCode::BAD_GATEWAY,
-                    error(
+                    v1::Error::new(
                         ErrorCode::UpstreamError,
                         "the token's issuer couldn't be reached",
                     ),
@@ -223,7 +275,12 @@ impl IdentityConfig {
     /// The config in the Worker's `CF_NIX_CACHE_API_OIDC_PROVIDERS`
     /// binding, or `None` if it isn't set.
     fn from_env(env: &Env) -> Result<Option<Self>, AuthError> {
-        Self::from_var(env.var(VAR).ok().map(|value| value.to_string()).as_deref())
+        Self::from_var(
+            env.var(PROVIDERS_KEY)
+                .ok()
+                .map(|value| value.to_string())
+                .as_deref(),
+        )
     }
 
     /// The config in `value`, the binding's value, or `None` if it's unset
@@ -238,20 +295,20 @@ impl IdentityConfig {
     fn parse(json: &str) -> Result<Self, String> {
         let config: Self = serde_json::from_str(json).map_err(|err| {
             format!(
-                "{VAR} must be a JSON array of {{ issuer, audience, jwks_uri?, claims }}: {err}"
+                "{PROVIDERS_KEY} must be a JSON array of {{ issuer, audience, jwks_uri?, claims }}: {err}"
             )
         })?;
         if config.providers.is_empty() {
-            return Err(format!("{VAR} must name at least one provider"));
+            return Err(format!("{PROVIDERS_KEY} must name at least one provider"));
         }
         for (index, provider) in config.providers.iter().enumerate() {
-            provider.check(&format!("{VAR}[{index}]"))?;
+            provider.check(&format!("{PROVIDERS_KEY}[{index}]"))?;
             if config.providers[..index]
                 .iter()
                 .any(|other| other.issuer == provider.issuer)
             {
                 return Err(format!(
-                    "{VAR}[{index}]: {} is configured twice",
+                    "{PROVIDERS_KEY}[{index}]: {} is configured twice",
                     provider.issuer
                 ));
             }

@@ -17,16 +17,21 @@
 //!   operation, and `cache_service_api_router`, an axum router over it that checks
 //!   requests against the spec before they reach a handler.
 //! - **Client** (`client` feature): `HttpClient`, a method per operation.
+//! - **Health**: the endpoints a server answers beside the API,
+//!   [`v1::HEALTH_LIVE_PATH`] and [`v1::HEALTH_READY_PATH`]; `HealthHandler`,
+//!   which answers them (`server` feature), and `HealthClient`, which asks
+//!   (`client` feature).
 //!
 //! # Generated code
 //!
 //! `openapi/nix/cache/v1/cachev1.yaml` is the source. `build.rs` runs
 //! [openapi-to-rust](https://github.com/gpu-cli/openapi-to-rust) over it into
 //! `OUT_DIR`, so none of it is checked in or edited by hand. What is
-//! hand-written, the narinfo format, is in `model.rs`, and mounted into `v1`
-//! beside it.
+//! hand-written is in `service/`, mounted into `v1` beside it: the narinfo
+//! format and the models' constructors in `service/model.rs`, the health
+//! endpoints in `service/handler.rs`.
 
-mod model;
+mod service;
 
 /// Everything for `nix.cache.v1`: the types, the narinfo format, and the server
 /// and client the crate's features enable.
@@ -44,5 +49,5 @@ pub mod v1 {
 
     include!(concat!(env!("OUT_DIR"), "/cachev1/mod.rs"));
 
-    pub use crate::model::*;
+    pub use crate::service::{handler::*, model::*};
 }

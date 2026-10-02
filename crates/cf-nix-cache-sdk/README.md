@@ -15,9 +15,9 @@ use cf_nix_cache_sdk::v1::*;
 | Feature | What it adds |
 |---|---|
 | (none) | The types: `Error`, the body of every error, and the narinfo format, `NarInfo`. |
-| `server` | `CacheServiceApi`, a response enum per operation, and `cache_service_api_router`, an axum router over it that checks requests against the document before they reach a handler. |
+| `server` | `CacheServiceApi`, a response enum per operation, and `cache_service_api_router`, an axum router over it that checks requests against the document before they reach a handler. `HealthHandler`, which answers the health endpoints beside it, `/health/live` and `/health/ready`. |
 | `signing` | `NarInfoSigKey`, which signs a narinfo the way Nix does. |
-| `client` | `HttpClient`, a method per operation, over reqwest. |
+| `client` | `HttpClient`, a method per operation, over reqwest, and `HealthClient`, which asks the health endpoints. |
 
 ## Calling the API
 

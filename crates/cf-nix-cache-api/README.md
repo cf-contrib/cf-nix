@@ -22,7 +22,7 @@ audience, and matching one of that issuer's claim sets.
    gh api repos/<org>/<repo> --jq .id   # repository_id
    ```
 3. **Deploy** the released bundle with the [Terraform / OpenTofu module](../../deployment/terraform) (`//deployment/terraform?ref=<version>`). It downloads the release (`index.js` and `index_bg.wasm`, both required), creates the R2 bucket, and sets up the bindings below and the workers.dev URL (or an optional custom domain). To deploy a local build instead, run `worker-build --release` here and point the module's `bundle_dir` at this directory's `build/`.
-4. **Check** that `<cache-url>/healthz` returns `200`. A `500` means the provider list is invalid, the bucket isn't bound, or the signing key can't be read or parsed; the reason is in Workers Logs.
+4. **Check** that `<cache-url>/health/ready` returns `200`. It says the Worker is up and serving; it doesn't check the bindings. An invalid provider list, an unbound bucket or an unreadable signing key shows on the first upload instead, as a `500` with the reason in Workers Logs.
 
 `wrangler.toml` in this directory is for local development, not production.
 
@@ -94,8 +94,8 @@ claim sets are the whole policy. Issuers that only give tokens to people who
 passed your policy, like Cloudflare Access or a cf-oidc-auth broker, need no
 pin.
 
-The config is checked when the Worker loads it. An invalid one fails closed:
-uploads get `500`, `/healthz` reports it, and the reason is logged. Every upload
+The config is checked when an upload reads it. An invalid one fails closed:
+the upload gets `500`, and the reason is logged. Every upload
 is logged with the identity it resolved to: the token's subject and issuer, and
 the claim set that let it in.
 
@@ -117,6 +117,41 @@ for a long upload: the root README has a
 [workflow step](../../README.md#quick-start) that keeps the file fresh. Keep the
 file readable only by you (`chmod 600`).
 
+### People: your GitHub token, through cf-oidc-auth
+
+The cache never takes a GitHub user token itself: it isn't signed, so only
+GitHub could vouch for it. A [cf-oidc-auth](https://github.com/cf-contrib/cf-oidc-auth)
+broker can, and exchanges it for a token of its own for the cache. Trust the
+broker as one more provider, pinned to the profile that issues for the cache:
+
+```json
+{
+  "issuer": "https://cf-oidc-broker.example.com",
+  "audience": "https://cache.example.com",
+  "claims": [{ "profile": "nix-push-people" }]
+}
+```
+
+The broker's profile decides who may upload, for example anyone with `write`
+on a repo (see its [Tokens for other services](https://github.com/cf-contrib/cf-oidc-auth/tree/main/packages/cf-oidc-broker#tokens-for-other-services)).
+A person then exchanges `gh auth token` once and uploads. The broker's token
+lasts as long as the profile's `max_ttl` (1 hour unless it sets more), so there's
+nothing to refresh; run it again once it has expired.
+
+```sh
+token=$(curl -fsS https://cf-oidc-broker.example.com/oauth/token \
+  -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+  -d subject_token="$(gh auth token)" \
+  -d subject_token_type=urn:ietf:params:oauth:token-type:access_token \
+  -d audience=https://cache.example.com \
+  -d repository=example-org/nix-cache-access \
+  -d profile=nix-push-people | jq -er .access_token)
+(umask 077 && printf 'machine cache.example.com\n  login oidc\n  password %s\n' "$token" > ~/.netrc-nix-cache)
+nix copy --to 'https://cache.example.com?compression=none' --option netrc-file ~/.netrc-nix-cache ./result
+```
+
+The cache only ever sees the broker's short-lived token, never the GitHub one.
+
 ## HTTP API
 
 The API is specified by the SDK's [OpenAPI document](../cf-nix-cache-sdk/openapi/nix/cache/v1/cachev1.yaml).
@@ -135,7 +170,7 @@ must use the content type Nix sends: `text/x-nix-narinfo` for narinfo and
 | `GET` | `/nar/<hash>.nar` | public | NAR archive bytes. |
 | `HEAD` | `/nar/<hash>.nar` | public | Existence check for a NAR (200 / 404). |
 | `PUT` | `/nar/<hash>.nar` | token | Upload a NAR archive. |
-| `GET` | `/healthz` | public | `200` if the bindings and auth config are valid, else `500`. Never shows the config. A deployment check, so not in the OpenAPI document. |
+| `GET` | `/health/live`, `/health/ready` | public | `200` while the Worker is up and serving. The SDK's `HealthHandler`; a deployment check, so not in the OpenAPI document. |
 
 **Errors** are JSON, in the shape cf-oidc-auth uses: `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of a failed upload, so the message says what to fix, except for `500` and `502`, whose details go only to the logs.
 

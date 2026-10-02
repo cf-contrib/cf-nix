@@ -9,6 +9,20 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 #[cfg(feature = "signing")]
 use ed25519_dalek::{Signature, Signer, SigningKey as DalekSigningKey};
 
+use crate::v1::{Error, ErrorCode};
+
+impl Error {
+    /// An error in the shape shared with cf-oidc-auth:
+    /// `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of
+    /// a failed upload, so the message says what to fix.
+    pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            error: code,
+            message: message.into(),
+        }
+    }
+}
+
 /// A parsed `.narinfo`, borrowing from its text.
 ///
 /// Parsing follows Nix's own parser (`NarInfo::NarInfo` in libstore's
