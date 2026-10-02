@@ -45,7 +45,7 @@ run "defaults" {
   command = plan
 
   assert {
-    condition     = [for b in cloudflare_worker_version.this.bindings : b.name] == ["CF_NIX_WORKER_BUCKET"]
+    condition     = [for b in cloudflare_worker_version.this.bindings : b.name] == ["CF_NIX_CACHE_API_BUCKET"]
     error_message = "without auth or a signing key, only the bucket should be bound"
   }
 
@@ -80,7 +80,7 @@ run "signing_key_from_secrets_store" {
   assert {
     condition = anytrue([
       for b in cloudflare_worker_version.this.bindings :
-      b.name == "CF_NIX_WORKER_SECRET" && b.type == "secrets_store_secret" && b.secret_name == "cf-nix-cache-signing-key"
+      b.name == "CF_NIX_CACHE_API_SECRET" && b.type == "secrets_store_secret" && b.secret_name == "cf-nix-cache-signing-key"
     ])
     error_message = "the signing key should be a Secrets Store binding"
   }
@@ -91,65 +91,74 @@ run "signing_key_from_secrets_store" {
   }
 }
 
-run "github_and_oidc" {
+run "oidc_issuers" {
   command = plan
 
   variables {
-    github_repository = "example-org/nix-cache-access"
-    github_owner_id   = "100000001"
-    github_oidc_rules = [{ repository_id = "200000002", ref = "refs/heads/main" }]
+    oidc_issuers = [
+      {
+        issuer = "https://token.actions.githubusercontent.com"
+        claims = [{ repository_owner_id = "100000001", ref = "refs/heads/main" }]
+      },
+      {
+        issuer   = "https://example.cloudflareaccess.com"
+        audience = "0123456789abcdef"
+        jwks_uri = "https://example.cloudflareaccess.com/cdn-cgi/access/certs"
+        claims   = [{ email = "uploader@example.com" }]
+      },
+    ]
   }
 
   assert {
-    condition = { for b in cloudflare_worker_version.this.bindings : b.name => b.text if b.type == "plain_text" } == {
-      CF_NIX_WORKER_GITHUB_REPOSITORY    = "example-org/nix-cache-access"
-      CF_NIX_WORKER_GITHUB_OWNER_ID      = "100000001"
-      CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE = "https://cf-nix-cache.example.workers.dev"
-      CF_NIX_WORKER_GITHUB_OIDC_RULES    = "[{\"ref\":\"refs/heads/main\",\"repository_id\":\"200000002\"}]"
+    condition = { for b in cloudflare_worker_version.this.bindings : b.name => jsondecode(b.text) if b.type == "plain_text" } == {
+      CF_NIX_CACHE_API_OIDC_ISSUERS = [
+        {
+          issuer   = "https://token.actions.githubusercontent.com"
+          audience = "https://cf-nix-cache.example.workers.dev"
+          claims   = [{ ref = "refs/heads/main", repository_owner_id = "100000001" }]
+        },
+        {
+          issuer   = "https://example.cloudflareaccess.com"
+          audience = "0123456789abcdef"
+          jwks_uri = "https://example.cloudflareaccess.com/cdn-cgi/access/certs"
+          claims   = [{ email = "uploader@example.com" }]
+        },
+      ]
     }
-    error_message = "auth bindings should be set, with the audience defaulting to the cache URL"
+    error_message = "the issuers should be bound, the audience defaulting to the cache URL and an unset jwks_uri left out"
   }
 }
 
-run "oidc_audience_override" {
+run "uploads_off_without_issuers" {
   command = plan
-
-  variables {
-    github_owner_id      = "100000001"
-    github_oidc_audience = "https://nix-cache.example.com"
-    github_oidc_rules    = [{ ref = "refs/heads/main" }]
-  }
 
   assert {
-    condition = anytrue([
-      for b in cloudflare_worker_version.this.bindings :
-      b.name == "CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE" && b.text == "https://nix-cache.example.com"
-    ])
-    error_message = "github_oidc_audience should override the default"
+    condition     = length([for b in cloudflare_worker_version.this.bindings : b if b.name == "CF_NIX_CACHE_API_OIDC_ISSUERS"]) == 0
+    error_message = "without issuers, no auth binding should be created"
   }
 }
 
-run "oidc_off_without_rules" {
+run "github_claims_must_pin_the_owner" {
   command = plan
 
   variables {
-    github_owner_id = "100000001"
+    oidc_issuers = [{
+      issuer = "https://token.actions.githubusercontent.com"
+      claims = [{ ref = "refs/heads/main" }]
+    }]
   }
 
-  assert {
-    condition     = length([for b in cloudflare_worker_version.this.bindings : b if startswith(b.name, "CF_NIX_WORKER_GITHUB_")]) == 0
-    error_message = "without rules, no OIDC binding should be created (a partial OIDC config fails closed)"
-  }
+  expect_failures = [var.oidc_issuers]
 }
 
-run "rules_need_owner_id" {
+run "issuers_need_claims" {
   command = plan
 
   variables {
-    github_oidc_rules = [{ ref = "refs/heads/main" }]
+    oidc_issuers = [{ issuer = "https://issuer.example.com", claims = [] }]
   }
 
-  expect_failures = [var.github_oidc_rules]
+  expect_failures = [var.oidc_issuers]
 }
 
 run "custom_domain" {

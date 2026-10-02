@@ -2,11 +2,11 @@
 
 > The Worker half of [cf-nix-cache](../..): a Nix binary cache on Cloudflare
 > Workers and R2, written in Rust. It serves narinfo and NARs from R2, signs
-> uploads, and authorizes uploaders by their GitHub identity.
+> uploads, and authorizes uploaders by an OIDC token from an issuer you trust.
 
-Reads are public. Uploads need HTTP Basic credentials, and the username picks
-how the Worker checks the password: `users` for a person's GitHub token, `actions`
-for a GitHub Actions OIDC token.
+Reads are public. An upload needs an OIDC token as the password of HTTP Basic
+credentials, from an issuer in `CF_NIX_CACHE_API_OIDC_ISSUERS`, for the cache's
+audience, and matching one of that issuer's claim sets.
 
 ## Deploy
 
@@ -16,13 +16,13 @@ for a GitHub Actions OIDC token.
    wrangler secrets-store secret create <store-id> --name cf-nix-cache-signing-key --scopes workers --remote
    ```
    Clients need the matching public key in `trusted-public-keys` (`nix key convert-secret-to-public`).
-2. **Look up numeric IDs** for OIDC rules. Pin IDs, not names, because a deleted repo or org name can be re-registered by someone else:
+2. **Decide who may upload**: an [issuer list](#authentication). For GitHub Actions, look up numeric IDs to pin. Pin IDs, not names, because a deleted repo or org name can be re-registered by someone else:
    ```sh
-   gh api orgs/<org> --jq .id           # github_owner_id
-   gh api repos/<org>/<repo> --jq .id   # repository_id in a rule
+   gh api orgs/<org> --jq .id           # repository_owner_id
+   gh api repos/<org>/<repo> --jq .id   # repository_id
    ```
 3. **Deploy** the released bundle with the [Terraform / OpenTofu module](../../deployment/terraform) (`//deployment/terraform?ref=<version>`). It downloads the release (`index.js` and `index_bg.wasm`, both required), creates the R2 bucket, and sets up the bindings below and the workers.dev URL (or an optional custom domain). To deploy a local build instead, run `worker-build --release` here and point the module's `bundle_dir` at this directory's `build/`.
-4. **Check** that `<cache-url>/healthz` returns `200`. A `500` means the auth config is invalid, the bucket isn't bound, or the signing key can't be read or parsed; the reason is in Workers Logs.
+4. **Check** that `<cache-url>/healthz` returns `200`. A `500` means the issuer list is invalid, the bucket isn't bound, or the signing key can't be read or parsed; the reason is in Workers Logs.
 
 `wrangler.toml` in this directory is for local development, not production.
 
@@ -30,91 +30,86 @@ for a GitHub Actions OIDC token.
 
 | Binding | Type | Required | Description |
 |---|---|---|---|
-| `CF_NIX_WORKER_BUCKET` | R2 bucket | yes | Stores `.narinfo` and `.nar` objects. |
-| `CF_NIX_WORKER_SECRET` | Secrets Store secret | conditional | `<key-name>:<base64>`, as emitted by `nix key generate-secret`. Required unless every uploader sends signed narinfo. A plain secret or var also works, e.g. for `wrangler dev`. |
-| `CF_NIX_WORKER_GITHUB_REPOSITORY` | var | for `users` | `owner/repo`. Users with push access to it can upload. |
-| `CF_NIX_WORKER_GITHUB_OWNER_ID` | var | for `actions` | Numeric ID of the GitHub org or user whose repos may upload (`gh api orgs/<org> --jq .id`, or `users/<user>`). |
-| `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE` | var | for `actions` | Expected `aud` of the OIDC token, e.g. the cache URL. Can't be GitHub's default. |
-| `CF_NIX_WORKER_GITHUB_OIDC_RULES` | var | for `actions` | JSON array of claim rules; see [CI: GitHub Actions OIDC](#ci-github-actions-oidc). |
+| `CF_NIX_CACHE_API_BUCKET` | R2 bucket | yes | Stores `.narinfo` and `.nar` objects. |
+| `CF_NIX_CACHE_API_SECRET` | Secrets Store secret | conditional | `<key-name>:<base64>`, as emitted by `nix key generate-secret`. Required unless every uploader sends signed narinfo. A plain secret or var also works, e.g. for `wrangler dev`. |
+| `CF_NIX_CACHE_API_OIDC_ISSUERS` | var | for uploads | JSON array of the issuers whose tokens may upload; see [Authentication](#authentication). Unset, uploads are off. |
 
 ## Authentication
 
-| Username | Password | The Worker checks | Enabled by |
-|---|---|---|---|
-| `users` | A GitHub user token (`gh auth token`) | The user has push access to `CF_NIX_WORKER_GITHUB_REPOSITORY` | `CF_NIX_WORKER_GITHUB_REPOSITORY` |
-| `actions` | A GitHub Actions OIDC token | Signature, issuer, audience, expiry and owner, then `CF_NIX_WORKER_GITHUB_OIDC_RULES` | `CF_NIX_WORKER_GITHUB_OWNER_ID`, `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE`, `CF_NIX_WORKER_GITHUB_OIDC_RULES` |
-
-A mechanism is off unless its bindings are set. With none set, every upload
-gets `401`. An invalid configuration, such as only some of the OIDC bindings,
-fails closed: uploads get `500` and the reason is logged.
-
-Every upload is logged with the identity it resolved to. To check your
-credentials before a long `nix copy`:
-
-```bash
-curl --netrc-file ~/.netrc https://<your-worker>.workers.dev/v1/whoami
-# {"kind":"users","subject":"octocat"}
-```
-
-Nix sends credentials to a binary cache only from a netrc file (`netrc-file` in
-`nix.conf`) or the URL, so that's where they go.
-
-### People: GitHub token
-
-Anyone with push access to `CF_NIX_WORKER_GITHUB_REPOSITORY` can upload with
-their own GitHub token. To manage access by team, give the team write access to
-that repo.
-
-Put your token in a netrc file readable only by you (`chmod 600 ~/.netrc`):
-
-```
-machine <your-worker>.workers.dev
-  login users
-  password <output of gh auth token>
-```
-
-and point Nix at it with `netrc-file = /home/you/.netrc` in `nix.conf`.
-
-`gh auth token` usually has `repo` scope on every repo you can reach and never
-expires. For a narrower credential, use a
-[fine-grained token](https://github.com/settings/personal-access-tokens/new)
-limited to `CF_NIX_WORKER_GITHUB_REPOSITORY`, with an expiry.
-[gh-nix](https://github.com/gh-extensions/gh-nix) (planned,
-[gh-extensions/gh-nix#1](https://github.com/gh-extensions/gh-nix/issues/1))
-will avoid the plain-text file altogether.
-
-The Worker checks the token with the GitHub API and reuses the result for 5
-minutes, keyed by a hash of the token. Removing someone's push access takes
-effect within those 5 minutes.
-
-GitHub App installation tokens (`ghs_…`, including `GITHUB_TOKEN` in Actions)
-are rejected. They identify a repo rather than a person, can't be limited to a
-branch, and fork pull requests get one too. Use OIDC in CI.
-
-### CI: GitHub Actions OIDC
-
-`CF_NIX_WORKER_GITHUB_OIDC_RULES` is a JSON array of rules, and a token is
-accepted if any rule matches. Within a rule every claim must match. `*` matches
-any run of characters, including `/`, except in `*_id` claims, which must match
-exactly. A claim missing from the token never matches.
+`CF_NIX_CACHE_API_OIDC_ISSUERS` lists the issuers whose tokens may upload, each
+with the audience its tokens must be for and who may upload:
 
 ```json
 [
-  { "repository_id": "200000002", "ref": "refs/heads/main" },
-  { "repository": "example-org/*", "environment": "release" }
+  {
+    "issuer": "https://token.actions.githubusercontent.com",
+    "audience": "https://cache.example.com",
+    "claims": [
+      { "repository_owner_id": "100000001", "repository_id": "200000002", "ref": "refs/heads/main" },
+      { "repository_owner_id": "100000001", "repository": "example-org/*", "environment": "release" }
+    ]
+  },
+  {
+    "issuer": "https://example.cloudflareaccess.com",
+    "audience": "<the Access application's AUD tag>",
+    "jwks_uri": "https://example.cloudflareaccess.com/cdn-cgi/access/certs",
+    "claims": [{ "email": "uploader@example.com" }]
+  }
 ]
 ```
 
-Every token must also come from a repo owned by `CF_NIX_WORKER_GITHUB_OWNER_ID`,
-because GitHub issues OIDC tokens to every repository on github.com. The token's
-audience must equal `CF_NIX_WORKER_GITHUB_OIDC_AUDIENCE` (a trailing `/` is
-ignored). The audience can't be GitHub's default `https://github.com/<owner>`,
-so a token requested for AWS or GCP doesn't work here.
+| Field | |
+|---|---|
+| `issuer` | Matched exactly against the token's `iss`. HTTPS, or plain HTTP on a loopback address for local development. |
+| `audience` | Must be one of the token's `aud` values (a trailing `/` is ignored). For GitHub Actions it can't be GitHub's default `https://github.com/<owner>`, so a token requested for AWS or GCP doesn't work here. |
+| `jwks_uri` | Optional. Where the issuer's signing keys are. Without it, they're taken from the issuer's discovery document, `<issuer>/.well-known/openid-configuration`, which must name the same issuer. |
+| `claims` | The claim sets. A token is accepted if any one matches. |
 
-In a workflow, the [action](../../action) sets this up: it gets the job's
-OIDC token, checks it against `/v1/whoami`, points Nix at a netrc file holding
-it, and refreshes it every 4 minutes. GitHub OIDC tokens expire after 5 minutes,
-and Nix reads the netrc again for every request, so long uploads keep working.
+A token is checked in this order, and the first failure is what the uploader
+sees:
+
+1. Its `iss` must be a configured issuer (`401 issuer … is not configured`).
+2. Its signature must verify with that issuer's keys, never with keys from
+   anything in the token. Only RS256 is accepted.
+3. Its `aud` must include the issuer's `audience`
+   (`401 token audience is …, expected …`), and its `exp` and `nbf` must hold,
+   within a minute of clock skew (`401 token expired`).
+4. One of the issuer's claim sets must match (`403 … no claim set for … matched`).
+   The message doesn't say which claims would have, since that's the policy.
+
+**Claim sets.** Within a set every claim must match. A pattern is exact, or a
+prefix ending in a single `*` (`example-org/*`, `refs/heads/release/*`); a `*`
+anywhere else is refused. `*_id` claims must match exactly. A claim missing
+from the token never matches, a list claim (`groups`) matches if any entry
+does, and numbers and booleans compare as written (`"email_verified": "true"`).
+
+**GitHub Actions** gives a token for any audience to any repository on
+github.com, so every claim set for its issuer must pin `repository_owner_id`;
+the Worker refuses the config otherwise. Issuers that only give tokens to people
+who passed your policy, like Cloudflare Access, need no such pin.
+
+The config is checked when the Worker loads it. An invalid one fails closed:
+uploads get `500`, `/healthz` reports it, and the reason is logged. Every upload
+is logged with the identity it resolved to: the token's subject and issuer, and
+the claim set that let it in.
+
+### Sending the token
+
+Nix sends credentials to a binary cache only from a netrc file (`netrc-file` in
+`nix.conf`, or `--option netrc-file`), so the token goes there, as the
+password. The login isn't read:
+
+```
+machine cache.example.com
+  login oidc
+  password <the token>
+```
+
+Nix reads the netrc again for every request, so a token can be replaced while
+`nix copy` runs. Short-lived tokens, like GitHub Actions' 5 minutes, need that
+for a long upload: the root README has a
+[workflow step](../../README.md#quick-start) that keeps the file fresh. Keep the
+file readable only by you (`chmod 600`).
 
 ## HTTP API
 
@@ -129,12 +124,11 @@ must use the content type Nix sends: `text/x-nix-narinfo` for narinfo and
 | `GET` | `/nix-cache-info` | public | Cache metadata (priority, etc.). |
 | `GET` | `/<hash>.narinfo` | public | Narinfo for a store path. |
 | `HEAD` | `/<hash>.narinfo` | public | Existence check for a narinfo (200 / 404). |
-| `PUT` | `/<hash>.narinfo` | basic | Upload a narinfo. |
+| `PUT` | `/<hash>.narinfo` | token | Upload a narinfo. |
 | `POST` | `/` | public | Mass query: a newline-separated list of hashes in, the cached subset out. |
 | `GET` | `/nar/<hash>.nar` | public | NAR archive bytes. |
 | `HEAD` | `/nar/<hash>.nar` | public | Existence check for a NAR (200 / 404). |
-| `PUT` | `/nar/<hash>.nar` | basic | Upload a NAR archive. |
-| `GET` | `/v1/whoami` | basic | `{ kind, subject, rule? }`: the identity the credentials resolve to. |
+| `PUT` | `/nar/<hash>.nar` | token | Upload a NAR archive. |
 | `GET` | `/healthz` | public | `200` if the bindings and auth config are valid, else `500`. Never shows the config. A deployment check, so not in the OpenAPI document. |
 
 **Errors** are JSON, in the shape cf-oidc-auth uses: `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of a failed upload, so the message says what to fix, except for `500` and `502`, whose details go only to the logs.
@@ -142,12 +136,12 @@ must use the content type Nix sends: `text/x-nix-narinfo` for narinfo and
 | Status | `error` | Means |
 |---|---|---|
 | `400` | `bad_request` | The narinfo or request is invalid, e.g. `narinfo is missing NarSize` |
-| `401` | `unauthorized` | Missing or invalid credentials, or a mechanism that isn't enabled |
-| `403` | `forbidden` | Valid credentials without upload access, e.g. `octocat has no push access to …` |
+| `401` | `unauthorized` | No token, or one that's malformed, badly signed, expired, for another audience, or from an issuer that isn't configured; or uploads are off |
+| `403` | `forbidden` | A valid token that no claim set for its issuer allows |
 | `404` | `not_found` | No such narinfo or NAR |
-| `500` | `misconfigured` | The auth config, the bindings or the signing key are invalid |
+| `500` | `misconfigured` | The issuer list, the bindings or the signing key are invalid |
 | `500` | `internal_error` | A stored object is unreadable |
-| `502` | `upstream_error` | The GitHub API or GitHub's signing keys couldn't be reached |
+| `502` | `upstream_error` | The token's issuer, its discovery document or its keys, couldn't be reached |
 
 A request the document doesn't allow is rejected before it reaches the Worker,
 as `application/problem+json` with a `code`: `415` for an undeclared content
@@ -155,27 +149,36 @@ type, `413` for a body over 64 MiB, `400` or `422` for a malformed request.
 
 **Validation and signing:** the Worker parses each uploaded narinfo, checks its
 format, and requires its `StorePath` to match the request's hash. Every stored
-narinfo carries a `Sig:`. If the uploader didn't sign and `CF_NIX_WORKER_SECRET`
+narinfo carries a `Sig:`. If the uploader didn't sign and `CF_NIX_CACHE_API_SECRET`
 is set, the Worker signs the upload itself. Otherwise the `PUT` returns `400`.
 
 ## Security
 
-- **No shared upload secret.** The only long-lived secret is the narinfo
-  signing key, in Secrets Store, so it never passes through Terraform or CI.
-- **OIDC guardrails**, checked when the config loads: the owner pin and a
-  custom audience are required, and `*_id` claims can't be globbed.
+- **No shared upload secret.** Uploaders send short-lived tokens issued for
+  this cache. The only long-lived secret is the narinfo signing key, in
+  Secrets Store, so it never passes through Terraform or CI.
+- **Keys come from the configured issuer only.** A token picks its issuer by
+  `iss`, but its keys are fetched from that issuer's discovery document or
+  configured `jwks_uri`, never from a URL in the token. The discovery document
+  must name the issuer it's for.
+- **Guardrails**, checked when the config loads: every issuer needs claim
+  sets, a `*` may only end a pattern, `*_id` claims match exactly, and
+  GitHub Actions' claim sets must pin the owner and can't use its default
+  audience.
 - **Tokens are never stored or logged.** Auth results are cached per isolate,
-  keyed by the SHA-256 of the credential. Logs show the resolved identity.
-- **GitHub's signing keys** are cached for an hour, and an unknown `kid`
-  refetches them at most once a minute, so made-up tokens can't make the Worker
-  hammer GitHub.
+  keyed by the SHA-256 of the token. Logs show the resolved identity.
+- **Issuers' keys** are cached for an hour, and an unknown `kid` refetches
+  them at most once a minute per issuer, so made-up tokens can't make the
+  Worker hammer an issuer.
 - **Signatures** are verified with WebCrypto (RS256), so no RSA crate ships in
   the bundle.
 
 ## Limitations
 
-- Removing someone's push access takes up to 5 minutes to apply (the GitHub
-  check's cache).
+- A token can't be revoked: it's good until it expires. Issuers keep that
+  short (GitHub Actions: 5 minutes).
+- Only RS256 tokens are accepted, which is what GitHub Actions, Cloudflare
+  Access and most issuers sign with.
 - Compressed NARs (`.nar.xz` etc.) aren't supported: uploads must use
   `?compression=none`.
 - NARs are held in memory on the way in and out, and an upload can be at most
@@ -194,18 +197,20 @@ nix develop -c worker-build --dev   # build the bundle into ./build (this direct
 nix develop -c wrangler dev         # serve locally (this directory)
 ```
 
-The integration tests call `wrangler dev` through the SDK's client. Uploads need a GitHub token
-with push access to the `CF_NIX_WORKER_GITHUB_REPOSITORY` in `wrangler.toml`:
+The integration tests call `wrangler dev` through the SDK's client. They run
+their own OIDC issuer on `127.0.0.1:8788`, the one `wrangler.toml` trusts, and
+upload with tokens it signs, so they need no credentials:
 
 ```bash
-CF_NIX_WORKER_GITHUB_TOKEN=$(gh auth token) nix develop -c cargo test --features integration
+nix develop -c wrangler dev                                  # in one shell, this directory
+nix develop -c cargo test --features integration             # in another
 ```
 
 ## Dependencies
 
-- [`cf-nix-cache-sdk`](../cf-nix-cache-sdk), the API's types and the server traits the Worker implements
+- [`cf-nix-cache-sdk`](../cf-nix-cache-sdk), the API's types, the server traits the Worker implements, and the narinfo format: parsing, validation and signing
 - [`worker`](https://crates.io/crates/worker) and [`worker-macros`](https://crates.io/crates/worker-macros), the Cloudflare Workers Rust SDK, with [`axum`](https://crates.io/crates/axum), which serves the SDK's router
 - [`http-auth-basic`](https://crates.io/crates/http-auth-basic) for the auth header
-- [`serde`](https://crates.io/crates/serde) and [`serde_json`](https://crates.io/crates/serde_json) for OIDC claims, rules and GitHub API responses
-- [`web-sys`](https://crates.io/crates/web-sys) for WebCrypto, which verifies OIDC token signatures
-- [`ed25519-dalek`](https://crates.io/crates/ed25519-dalek), [`sha2`](https://crates.io/crates/sha2), and [`base64`](https://crates.io/crates/base64) for signing and validation
+- [`serde`](https://crates.io/crates/serde) and [`serde_json`](https://crates.io/crates/serde_json) for the issuer list, token claims, discovery documents and key sets
+- [`web-sys`](https://crates.io/crates/web-sys) for WebCrypto, which verifies token signatures
+- [`base64`](https://crates.io/crates/base64) to decode tokens, and [`sha2`](https://crates.io/crates/sha2) to key the auth cache by the token's hash

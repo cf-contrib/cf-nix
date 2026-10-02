@@ -1,8 +1,9 @@
 # cf-nix-cache
 
 > A Nix binary cache on Cloudflare Workers and R2: substitutes come from
-> Cloudflare's edge, and uploads authenticate with GitHub identity, so there's
-> no shared upload secret to store or rotate.
+> Cloudflare's edge, and uploads authenticate with an OIDC token from an issuer
+> you trust (GitHub Actions, Cloudflare Access, …), so there's no shared upload
+> secret to store or rotate.
 
 [![CI](https://github.com/cf-contrib/cf-nix-cache/actions/workflows/ci.yml/badge.svg)](https://github.com/cf-contrib/cf-nix-cache/actions/workflows/ci.yml)
 [![Rust (edition 2021)](https://img.shields.io/badge/Rust-2021-black?logo=rust)](https://www.rust-lang.org/)
@@ -10,29 +11,16 @@
 [![License: MIT](https://img.shields.io/github/license/cf-contrib/cf-nix-cache)](LICENSE)
 
 > [!NOTE]
-> **Pre-1.0.** The Worker's bindings, the module's inputs and the action's
-> inputs may still change between minor versions.
-
-```yaml
-permissions:
-  contents: read
-  id-token: write
-
-steps:
-  - run: nix build .#app
-  - uses: cf-contrib/cf-nix-cache@v0.4.0 # x-release-please-version
-    with:
-      cache-url: https://cf-nix-cache.example.workers.dev
-  - run: nix copy --to 'https://cf-nix-cache.example.workers.dev?compression=none' ./result
-```
+> **Pre-1.0.** The Worker's bindings and the module's inputs may still change
+> between minor versions.
 
 | Component | Ships as | What it is |
 |---|---|---|
-| [Action](action) | `uses: cf-contrib/cf-nix-cache@<version>` | Sets up a job's OIDC credentials for `nix copy`, and keeps them fresh during long uploads. No runtime dependencies. |
-| [Worker](crates/cf-nix-cache-api) | `index.js` + `index_bg.wasm` in [Releases](https://github.com/cf-contrib/cf-nix-cache/releases) | The cache, written in Rust. Serves narinfo and NARs from R2, validates and signs uploads, and authorizes uploaders by their GitHub identity. |
+| [Worker](crates/cf-nix-cache-api) | `index.js` + `index_bg.wasm` in [Releases](https://github.com/cf-contrib/cf-nix-cache/releases) | The cache, written in Rust. Serves narinfo and NARs from R2, validates and signs uploads, and authorizes uploaders by their OIDC token. |
 | [SDK](crates/cf-nix-cache-sdk) | A Rust crate in this workspace | The HTTP API's [OpenAPI document](crates/cf-nix-cache-sdk/openapi/nix/cache/v1/cachev1.yaml), and the types, server traits and client generated from it. The Worker implements its server. |
+| [Terraform module](deployment/terraform) | `//deployment/terraform?ref=<version>` | Deploys the released Worker with its R2 bucket and bindings. |
 
-The Worker, with its Terraform module, and the action are released together from one tag.
+The Worker and its Terraform module are released together from one tag.
 
 ## How it works
 
@@ -41,22 +29,23 @@ sequenceDiagram
     participant Reader as nix (substitute)
     participant Uploader as nix copy
     participant Worker as cf-nix-cache Worker
-    participant GitHub as GitHub
+    participant Issuer as OIDC issuer
     participant R2 as R2 bucket
 
     Reader->>Worker: GET narinfo / NAR (public)
     Worker->>R2: get
     Worker-->>Reader: object
-    Uploader->>Worker: PUT, Basic users:token or actions:jwt
-    Worker->>GitHub: push access (API) or JWT signature (JWKS), cached
+    Uploader->>Worker: PUT, HTTP Basic with the token as the password
+    Worker->>Issuer: discovery and signing keys (cached)
+    Worker->>Worker: verify the token, match a claim set
     Worker->>Worker: validate narinfo, sign it if unsigned
     Worker->>R2: put
 ```
 
-Reads are public. For uploads, the HTTP Basic username picks the check:
-
-- **`users`**: a person's GitHub token, allowed with push access to one repo. Manage who can upload with that repo's collaborators and teams.
-- **`actions`**: a GitHub Actions OIDC token, allowed when it comes from your org and matches a claim rule (repo, branch, environment, …).
+Reads are public. An upload needs a token from an issuer you configure, for
+the cache's audience, that matches one of that issuer's claim sets: for GitHub
+Actions, your org's repos on `main`, say; for Cloudflare Access, your team. The
+Worker never calls the issuer per request, only for its keys.
 
 The only long-lived secret is the narinfo signing key, in Secrets Store. See the [Worker's README](crates/cf-nix-cache-api#authentication) for the details.
 
@@ -68,7 +57,7 @@ Nix supports S3-compatible caches natively with the [`s3://`](https://nix.dev/ma
 |---|---|---|---|
 | `s3://` to R2 | An S3 key pair per uploader | On every uploader (`secret-key-files`) | Nix built-in; opaque blob storage |
 | Public R2 bucket + `s3://` uploads | An S3 key pair per uploader | On every uploader | Anonymous reads via a custom domain |
-| **cf-nix-cache** | **GitHub identity, or the job's OIDC token** | **In the Worker (Secrets Store)** | Validates narinfo; one-request mass query |
+| **cf-nix-cache** | **A short-lived OIDC token from an issuer you trust** | **In the Worker (Secrets Store)** | Validates narinfo; one-request mass query |
 
 If S3 keys on every uploader are acceptable to you, `s3://` to R2 is less to run.
 
@@ -83,21 +72,49 @@ Also: this is a hobby project. I wanted an excuse to spend more time with Cloudf
    substituters = https://cf-nix-cache.example.workers.dev https://cache.nixos.org
    trusted-public-keys = cache.example.com-1:<base64-public-key> cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
    ```
-4. **Upload.** In CI, add the [action](action) to a job with `permissions: id-token: write`. People put their GitHub token in a netrc file; see the [Worker's README](crates/cf-nix-cache-api#people-github-token). Either way, push with `nix copy --to 'https://<cache>?compression=none' <paths>`: the cache stores uncompressed NARs.
+4. **Upload** with `nix copy --to 'https://<cache>?compression=none' <paths>` (the cache stores uncompressed NARs), with the token in a netrc file: that's the only place Nix sends credentials from. In GitHub Actions:
+   ```yaml
+   permissions:
+     contents: read
+     id-token: write
+
+   steps:
+     - run: nix build .#app
+     - name: Upload
+       env:
+         CACHE: https://cf-nix-cache.example.workers.dev
+       run: |
+         # A job's OIDC token lasts 5 minutes and Nix rereads the netrc for every
+         # request, so a long upload needs it rewritten while it runs: every
+         # minute, so a failed refresh or two is retried before the token expires.
+         host=${CACHE#*://} && host=${host%%[:/]*}
+         netrc() {
+           token=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$CACHE" | jq -er .value) || return
+           echo "::add-mask::$token"
+           (umask 077 && printf 'machine %s\n  login oidc\n  password %s\n' \
+             "$host" "$token" > "$RUNNER_TEMP/netrc.new")
+           mv "$RUNNER_TEMP/netrc.new" "$RUNNER_TEMP/netrc"
+         }
+         netrc
+         (while sleep 60 >/dev/null 2>&1; do netrc || true; done) &
+         trap "kill $!" EXIT
+         nix copy --to "$CACHE?compression=none" --option netrc-file "$RUNNER_TEMP/netrc" ./result
+   ```
+   For other issuers, see the [Worker's README](crates/cf-nix-cache-api#authentication).
 
 ## Development
 
-Everything runs inside the dev shell (`nix develop`), which pins Rust, `worker-build`, `wrangler`, OpenTofu and Node.
+Everything runs inside the dev shell (`nix develop`), which pins Rust, `worker-build`, `wrangler` and OpenTofu.
 
 ```sh
 nix develop -c cargo test                                   # the Worker's and the SDK's tests
-(cd action && nix develop -c npm test)       # the action's tests
 (cd deployment/terraform && nix develop -c sh -c "tofu init -backend=false && tofu test")   # the module's tests
 ```
 
-Each component's README has the rest: the [Worker](crates/cf-nix-cache-api#development) (bundle, `wrangler dev`, integration tests), the [SDK](crates/cf-nix-cache-sdk#generated-code), the [action](action#development) and the [module](deployment/terraform#development).
+Each component's README has the rest: the [Worker](crates/cf-nix-cache-api#development) (bundle, `wrangler dev`, integration tests), the [SDK](crates/cf-nix-cache-sdk#generated-code) and the [module](deployment/terraform#development).
 
-Releases are cut by release-please from Conventional Commits. Each release is tagged `vX.Y.Z` and attaches `index.js` and `index_bg.wasm`. Pin the action and the module to a release tag or its commit SHA: before 1.0 there is no floating major tag, because minor releases may break.
+Releases are cut by release-please from Conventional Commits. Each release is tagged `vX.Y.Z` and attaches `index.js` and `index_bg.wasm`. Pin the module to a release tag or its commit SHA: before 1.0 there is no floating major tag, because minor releases may break.
 
 ## License
 

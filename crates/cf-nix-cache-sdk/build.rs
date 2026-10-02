@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         tracing_enabled: false,
         server: server.then(|| ServerSection {
             framework: "axum".to_string(),
-            operations: ["tag:cache", "tag:auth"].map(String::from).to_vec(),
+            operations: vec!["tag:cache".to_string()],
             prune_models: false,
             validation: ServerValidationSection {
                 max_body_bytes: MAX_BODY_BYTES,

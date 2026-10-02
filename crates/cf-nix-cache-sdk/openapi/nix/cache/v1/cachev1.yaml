@@ -3,9 +3,8 @@ info:
   title: cf-nix-cache
   description: |
     A Nix binary cache on Cloudflare Workers and R2. Reads are public. Uploads
-    need HTTP Basic credentials, and the username picks how the Worker checks
-    the password: `users` for a person's GitHub token, `actions` for a GitHub
-    Actions OIDC token.
+    need an OIDC token from an issuer the Worker trusts, as the password of
+    HTTP Basic credentials.
 
     Errors are JSON, in the shape cf-oidc-auth uses. A request that doesn't fit
     this document (a body over the size limit, the wrong content type) is
@@ -17,8 +16,6 @@ info:
 tags:
   - name: cache
     description: The Nix binary cache protocol.
-  - name: auth
-    description: Credential checks.
 
 paths:
   /nix-cache-info:
@@ -104,7 +101,7 @@ paths:
       description: |
         Parses and validates the narinfo, and requires its `StorePath` to match
         the hash. It is stored as sent. If it has no `Sig:`, the Worker signs it
-        with `CF_NIX_WORKER_SECRET`, and rejects it when no key is set.
+        with `CF_NIX_CACHE_API_SECRET`, and rejects it when no key is set.
       security:
         - basic: []
       parameters:
@@ -197,42 +194,14 @@ paths:
         "502":
           $ref: "#/components/responses/BadGateway"
 
-  /v1/whoami:
-    get:
-      operationId: getWhoami
-      tags: [auth]
-      summary: Resolve credentials
-      description: |
-        Resolves the credentials the same way as an upload and returns the
-        identity, so a client can check its setup before a `nix copy`.
-      security:
-        - basic: []
-      parameters:
-        - $ref: "#/components/parameters/Authorization"
-      responses:
-        "200":
-          description: The identity the credentials resolve to.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Identity"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "500":
-          $ref: "#/components/responses/InternalServerError"
-        "502":
-          $ref: "#/components/responses/BadGateway"
-
 components:
   securitySchemes:
     basic:
       type: http
       scheme: basic
       description: |
-        Username `users` with a GitHub user token, or `actions` with a GitHub
-        Actions OIDC token.
+        An OIDC token from an issuer the Worker trusts, as the password. The
+        username isn't read.
 
   parameters:
     # Declared as a parameter, not only as `security`, so the server is handed
@@ -253,13 +222,15 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     Unauthorized:
-      description: Missing or invalid credentials, or a mechanism that isn't enabled.
+      description: |
+        Missing or invalid credentials: no token, a token from an issuer the
+        Worker doesn't trust, or one for another audience or expired.
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
     Forbidden:
-      description: Valid credentials without upload access.
+      description: A valid token that no claim set for its issuer allows.
       content:
         application/json:
           schema:
@@ -280,7 +251,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     BadGateway:
-      description: The GitHub API or GitHub's signing keys couldn't be reached.
+      description: The token's issuer, its discovery document or its keys, couldn't be reached.
       content:
         application/json:
           schema:
@@ -307,23 +278,3 @@ components:
         - misconfigured
         - internal_error
         - upstream_error
-    Identity:
-      type: object
-      description: The identity a request's credentials resolve to.
-      required: [kind, subject]
-      properties:
-        kind:
-          $ref: "#/components/schemas/IdentityKind"
-        subject:
-          type: string
-          description: The GitHub login (`users`) or the OIDC `sub` claim (`actions`).
-        rule:
-          type: integer
-          format: uint32
-          description: Index of the matching `CF_NIX_WORKER_GITHUB_OIDC_RULES` entry (`actions` only).
-    IdentityKind:
-      type: string
-      description: |
-        `users` for a person with their GitHub user token, `actions` for a
-        GitHub Actions job with its OIDC token.
-      enum: [users, actions]

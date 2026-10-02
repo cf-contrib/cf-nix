@@ -8,4 +8,4 @@
 
 mod handler;
 
-pub use handler::{AuthServiceHandler, CacheServiceHandler};
+pub use handler::CacheServiceHandler;

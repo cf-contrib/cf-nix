@@ -14,8 +14,9 @@ use cf_nix_cache_sdk::v1::*;
 
 | Feature | What it adds |
 |---|---|
-| (none) | The types: `Identity`, what `GET /v1/whoami` returns, and `Error`, the body of every error. |
-| `server` | A trait per tag (`CacheApi`, `AuthApi`), a response enum per operation, and `build_router`, an axum router over both that checks requests against the document before they reach a handler. |
+| (none) | The types: `Error`, the body of every error, and the narinfo format, `NarInfo`. |
+| `server` | `CacheApi`, a response enum per operation, and `cache_api_router`, an axum router over it that checks requests against the document before they reach a handler. |
+| `signing` | `NarInfoSigKey`, which signs a narinfo the way Nix does. |
 | `client` | `HttpClient`, a method per operation, over reqwest. |
 
 ## Calling the API
@@ -24,9 +25,11 @@ use cf_nix_cache_sdk::v1::*;
 use cf_nix_cache_sdk::v1::HttpClient;
 
 let client = HttpClient::new().with_base_url("https://cf-nix-cache.example.workers.dev");
-// HTTP Basic credentials: `users` with a GitHub token, or `actions` with an OIDC token.
-let identity = client.get_whoami(Some("Basic dXNlcnM6Z2hvX2V4YW1wbGU=")).await?;
-println!("{} {}", identity.kind, identity.subject);
+let info = client.get_nar_info("j5m1qd2dbsmhq0mw13yb8wijnm3pq4z0").await?;
+
+// Uploads take an OIDC token as the password of HTTP Basic credentials.
+let authorization = format!("Basic {}", base64(format!("oidc:{token}")));
+client.put_nar_info("j5m1qd2dbsmhq0mw13yb8wijnm3pq4z0", Some(authorization), info).await?;
 ```
 
 ## Generated code

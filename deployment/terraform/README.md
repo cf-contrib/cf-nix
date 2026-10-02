@@ -14,12 +14,17 @@ module "cf_nix_cache" {
   bucket_name        = "nix-cache"
   signing_key_secret = { secret_store_id = var.secret_store_id, secret_name = "cf-nix-cache-signing-key" }
 
-  # People: anyone with push access to this repo can upload with their GitHub token.
-  github_repository = "example-org/nix-cache-access"
-
-  # GitHub Actions: OIDC tokens from this org's repos that match a rule.
-  github_owner_id   = "100000001" # gh api orgs/<org> --jq .id
-  github_oidc_rules = [{ repository_id = "200000002", ref = "refs/heads/main" }]
+  # Who may upload: OIDC tokens from these issuers that match a claim set.
+  oidc_issuers = [{
+    # GitHub Actions jobs in this org's repo, on main. The audience defaults
+    # to the cache URL.
+    issuer = "https://token.actions.githubusercontent.com"
+    claims = [{
+      repository_owner_id = "100000001" # gh api orgs/<org> --jq .id
+      repository_id       = "200000002" # gh api repos/<org>/<repo> --jq .id
+      ref                 = "refs/heads/main"
+    }]
+  }]
 }
 
 output "cache_url" {
@@ -27,8 +32,8 @@ output "cache_url" {
 }
 ```
 
-The module is released with the Worker and the action from the same tag, and
-by default deploys the Worker bundle of the release its `ref` points to.
+The module is released with the Worker from the same tag, and by default
+deploys the Worker bundle of the release its `ref` points to.
 
 ## Prerequisites
 
@@ -70,15 +75,12 @@ Then set up upload credentials as described in the Worker's
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `account_id` | yes | | Cloudflare account ID. |
-| `hostname` | yes | | `<worker_name>.<subdomain>.workers.dev`, or a custom domain (needs `zone_id`). Also the default OIDC audience. |
+| `hostname` | yes | | `<worker_name>.<subdomain>.workers.dev`, or a custom domain (needs `zone_id`). Its URL is also the default OIDC audience. |
 | `zone_id` | for a custom domain | `null` | Zone that holds a custom-domain `hostname`. |
 | `bucket_name` | yes | | R2 bucket to create for `.narinfo` and `.nar` objects. |
 | `expire_after_days` | no | `45` | Delete objects this many days after upload. `null` keeps them. |
 | `signing_key_secret` | no | `null` | `{ secret_store_id, secret_name }` of the signing key. `null`: uploaders must sign. |
-| `github_repository` | no | `null` | `owner/repo`; GitHub users with push access to it can upload. |
-| `github_owner_id` | with rules | `null` | Numeric GitHub org/user ID whose repos may upload from Actions. |
-| `github_oidc_audience` | no | the cache URL | Expected `aud` of Actions OIDC tokens. Set it only if clients request another audience. |
-| `github_oidc_rules` | no | `[]` | OIDC claim rules (list of maps); any one must match. Empty turns OIDC off. |
+| `oidc_issuers` | no | `[]` | Issuers whose tokens may upload: `{ issuer, audience?, jwks_uri?, claims }`. `audience` defaults to the cache URL; `claims` is a list of claim sets, any one of which must match. Empty turns uploads off. See the Worker's [Authentication](../../crates/cf-nix-cache-api/README.md#authentication). |
 | `release_tag` | no | this module's release | Release to deploy, e.g. `v1.2.3`, or `"latest"`. |
 | `bundle_dir` | no | `null` | A local `worker-build --release` output directory to deploy instead of a release. |
 | `worker_name` | no | `cf-nix-cache` | Cloudflare Worker script name. |
@@ -88,7 +90,7 @@ Then set up upload credentials as described in the Worker's
 
 | Output | Description |
 |---|---|
-| `url` | The cache URL, for `substituters`, `nix copy --to` and the action's `cache-url`. |
+| `url` | The cache URL, for `substituters`, `nix copy --to`, and the audience uploaders request their tokens for. |
 | `worker_name` | Deployed Worker script name. |
 | `bucket_name` | R2 bucket backing the cache. |
 | `release_tag` | Release that was deployed, or `"local"` for `bundle_dir`. |
@@ -97,6 +99,20 @@ Then set up upload credentials as described in the Worker's
 
 Bump the `ref` in `source` and run `tofu apply`. The module downloads that
 release's bundle, uploads a new Worker version and shifts all traffic to it.
+
+### From 0.4
+
+Uploads authenticate with OIDC tokens from any issuer you list, instead of
+GitHub tokens or GitHub Actions only:
+
+- `github_owner_id`, `github_oidc_audience` and `github_oidc_rules` become one
+  `oidc_issuers` entry for `https://token.actions.githubusercontent.com`. Add
+  `repository_owner_id` to each of its claim sets, which used to be implied,
+  and write any `*` only at the end of a pattern.
+- `github_repository` is gone, and with it uploads with a person's GitHub
+  token. Give people a token from an issuer such as Cloudflare Access instead.
+- The bindings are renamed `CF_NIX_CACHE_API_*`. The module sets them, so
+  there's nothing to do unless you read them elsewhere.
 
 ## Migrating from `examples/terraform`
 
@@ -129,7 +145,7 @@ moved {
 
 - `r2_bucket_name` is now `bucket_name`, and `hostname` is new.
 - `nix_secret` is gone: put the key in Secrets Store and set `signing_key_secret`. It then no longer sits in your Terraform state; remove the old value from any `terraform.tfvars`.
-- The bindings are named `CF_NIX_WORKER_*`; the module sets them.
+- The bindings are named `CF_NIX_CACHE_API_*`; the module sets them.
 
 ## Development
 

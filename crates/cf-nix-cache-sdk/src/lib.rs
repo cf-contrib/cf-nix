@@ -9,14 +9,13 @@
 //!
 //! # What is in it
 //!
-//! - **Types**: [`v1::Identity`], what `GET /v1/whoami` returns, and
-//!   [`v1::Error`], the body of every error.
+//! - **Types**: [`v1::Error`], the body of every error.
 //! - **Narinfo**: [`v1::NarInfo`], which parses a `.narinfo` the way Nix does
 //!   and validates it the way the Worker does before storing an upload, and
 //!   (`signing` feature) `NarInfoSigKey`, which signs one the way Nix does.
-//! - **Server** (`server` feature): a trait per tag, `CacheApi` and `AuthApi`,
-//!   a response enum per operation, and `build_router`, an axum router over
-//!   both that checks requests against the spec before they reach a handler.
+//! - **Server** (`server` feature): `CacheApi`, a response enum per
+//!   operation, and `cache_api_router`, an axum router over it that checks
+//!   requests against the spec before they reach a handler.
 //! - **Client** (`client` feature): `HttpClient`, a method per operation.
 //!
 //! # Generated code

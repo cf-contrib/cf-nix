@@ -10,7 +10,6 @@
       "bump-minor-pre-major": true,
       "extra-files": [
         "README.md",
-        "action/README.md",
         "deployment/terraform/README.md",
         "deployment/terraform/variables.tf",
         "crates/cf-nix-cache-sdk/openapi/nix/cache/v1/cachev1.yaml",
