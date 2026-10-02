@@ -112,11 +112,11 @@ machine cache.example.com
   password <the token>
 ```
 
-Nix reads the netrc again for every request, so a token can be replaced while
-`nix copy` runs. Short-lived tokens, like GitHub Actions' 5 minutes, need that
-for a long upload: the root README has a
-[workflow step](../../README.md#quick-start) that keeps the file fresh. Keep the
-file readable only by you (`chmod 600`).
+The root README has a [workflow step](../../README.md#quick-start) for GitHub
+Actions. Its token lasts 5 minutes, so the upload has to finish within that.
+Nix reads the netrc again for every request, so for a longer one, rewrite the
+file with a fresh token while `nix copy` runs. Keep the file readable only by
+you (`chmod 600`).
 
 ### People: your GitHub token, through cf-oidc-auth
 

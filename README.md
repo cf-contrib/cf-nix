@@ -82,26 +82,26 @@ Also: this is a hobby project. I wanted an excuse to spend more time with Cloudf
      - run: nix build .#app
      - name: Upload
        env:
-         CACHE: https://cf-nix-cache.example.workers.dev
+         NIX_CACHE_DOMAIN: cf-nix-cache.example.workers.dev
        run: |
-         # A job's OIDC token lasts 5 minutes and Nix rereads the netrc for every
-         # request, so a long upload needs it rewritten while it runs: every
-         # minute, so a failed refresh or two is retried before the token expires.
-         host=${CACHE#*://} && host=${host%%[:/]*}
-         netrc() {
-           token=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$CACHE" | jq -er .value) || return
-           echo "::add-mask::$token"
-           (umask 077 && printf 'machine %s\n  login oidc\n  password %s\n' \
-             "$host" "$token" > "$RUNNER_TEMP/netrc.new")
-           mv "$RUNNER_TEMP/netrc.new" "$RUNNER_TEMP/netrc"
-         }
-         netrc
-         (while sleep 60 >/dev/null 2>&1; do netrc || true; done) &
-         trap "kill $!" EXIT
-         nix copy --to "$CACHE?compression=none" --option netrc-file "$RUNNER_TEMP/netrc" ./result
+         github_token=$(curl -fsS \
+           -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+           "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://$NIX_CACHE_DOMAIN" |
+           jq -r .value)
+         echo "::add-mask::$github_token"
+
+         umask 077
+         cat > "$RUNNER_TEMP/netrc" <<EOF
+         machine $NIX_CACHE_DOMAIN
+           login oidc
+           password $github_token
+         EOF
+
+         nix copy --to "https://$NIX_CACHE_DOMAIN?compression=none" \
+           --option netrc-file "$RUNNER_TEMP/netrc" \
+           ./result
    ```
-   For other issuers, see the [Worker's README](crates/cf-nix-cache-api#authentication). People can upload with their `gh auth token` through a [cf-oidc-auth](https://github.com/cf-contrib/cf-oidc-auth) broker, with [one exchange](crates/cf-nix-cache-api#people-your-github-token-through-cf-oidc-auth) and no refresh.
+   The job's token lasts 5 minutes, so the upload has to finish within that. For other issuers, see the [Worker's README](crates/cf-nix-cache-api#authentication). People can upload with their `gh auth token` through a [cf-oidc-auth](https://github.com/cf-contrib/cf-oidc-auth) broker, with [one exchange](crates/cf-nix-cache-api#people-your-github-token-through-cf-oidc-auth) and no refresh.
 
 ## Development
 
