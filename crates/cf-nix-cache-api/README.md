@@ -1,4 +1,4 @@
-# cf-nix-cache Worker
+# cf-nix-cache-api
 
 > The Worker half of [cf-nix-cache](../..): a Nix binary cache on Cloudflare
 > Workers and R2, written in Rust. It serves narinfo and NARs from R2, signs

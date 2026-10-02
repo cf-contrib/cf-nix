@@ -1,4 +1,4 @@
-# cf-nix-cache SDK
+# cf-nix-cache-sdk
 
 > The HTTP API of [cf-nix-cache](../..), as an OpenAPI document, and the Rust
 > generated from it: the types, the server traits the [Worker](../cf-nix-cache-api)
