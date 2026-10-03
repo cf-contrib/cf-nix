@@ -118,40 +118,51 @@ Nix reads the netrc again for every request, so for a longer one, rewrite the
 file with a fresh token while `nix copy` runs. Keep the file readable only by
 you (`chmod 600`).
 
-### People: your GitHub token, through cf-oidc-auth
+### People: through cf-oidc-auth
 
-The cache never takes a GitHub user token itself: it isn't signed, so only
-GitHub could vouch for it. A [cf-oidc-auth](https://github.com/cf-contrib/cf-oidc-auth)
-broker can, and exchanges it for a token of its own for the cache. Trust the
-broker as one more provider, pinned to the profile that issues for the cache:
+The cache takes OIDC tokens only, so a person needs one from an identity
+provider, such as a [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/validating-json/)
+application. A [cf-oidc-auth](https://github.com/cf-contrib/cf-oidc-auth)
+broker exchanges it for a short-lived token of its own for the cache. Trust the
+broker as one more provider, for its access tokens only, pinned to the profile
+that issues for the cache:
 
 ```json
 {
-  "issuer": "https://cf-oidc-broker.example.com",
+  "issuer": "https://cf-oidc-exchange.example.com",
   "audience": "https://cache.example.com",
-  "claims": [{ "profile": "nix-push-people" }]
+  "typ": "at+jwt",
+  "claims": [{ "profile": "nix-push" }]
 }
 ```
 
-The broker's profile decides who may upload, for example anyone with `write`
-on a repo (see its [Tokens for other services](https://github.com/cf-contrib/cf-oidc-auth/tree/main/packages/cf-oidc-broker#tokens-for-other-services)).
-A person then exchanges `gh auth token` once and uploads. The broker's token
-lasts as long as the profile's `max_ttl` (1 hour unless it sets more), so there's
-nothing to refresh; run it again once it has expired.
+The broker's profile decides who may upload, by the claims of the person's own
+token, `email` from Cloudflare Access say (see the broker's
+[People](https://github.com/cf-contrib/cf-oidc-auth/tree/main/crates/cf-oidc-exchange-api#people)
+and [Tokens for other services](https://github.com/cf-contrib/cf-oidc-auth/tree/main/crates/cf-oidc-exchange-api#tokens-for-other-services)).
+A person signs in once, then exchanges a token and uploads. The broker's token
+lasts the profile's `ttl`, never past the person's own; run it again once it
+has expired. No token goes on a command line, where the process list would
+show it: curl reads the subject token from stdin.
 
 ```sh
-token=$(curl -fsS https://cf-oidc-broker.example.com/oauth/token \
+cloudflared access login https://cf-oidc-exchange.example.com   # once
+subject=$(cloudflared access token -app=https://cf-oidc-exchange.example.com)
+token=$(printf %s "$subject" | curl -fsS https://cf-oidc-exchange.example.com/oauth/token \
   -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
-  -d subject_token="$(gh auth token)" \
-  -d subject_token_type=urn:ietf:params:oauth:token-type:access_token \
+  --data-urlencode subject_token@- \
+  -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
   -d audience=https://cache.example.com \
-  -d repository=example-org/nix-cache-access \
-  -d profile=nix-push-people | jq -er .access_token)
+  -d profile=nix-push | jq -er .access_token)
 (umask 077 && printf 'machine cache.example.com\n  login oidc\n  password %s\n' "$token" > ~/.netrc-nix-cache)
 nix copy --to 'https://cache.example.com?compression=none' --option netrc-file ~/.netrc-nix-cache ./result
 ```
 
-The cache only ever sees the broker's short-lived token, never the GitHub one.
+The cache only ever sees the broker's short-lived token, never the person's.
+To skip the broker, list the identity provider itself as a provider instead:
+for Cloudflare Access, its team domain as the `issuer`, the application's AUD
+tag as the `audience`, its keys' URL as the `jwks_uri`, and claim sets on
+`email`.
 
 ## HTTP API
 
