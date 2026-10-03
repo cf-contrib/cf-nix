@@ -93,7 +93,7 @@ impl<S> Authorize<S> {
         let header = headers
             .get(AUTHORIZATION)
             .and_then(|value| value.to_str().ok());
-        let token = basic_password(header)?;
+        let token = token_from_header(header)?;
 
         let (provider, jwt) = providers.verify(&token).await.map_err(api_error)?;
         let claims = provider.claims.authorize(&jwt.claims).map_err(api_error)?;
@@ -143,10 +143,10 @@ where
     }
 }
 
-/// The password of an `Authorization: Basic` header: where Nix sends the
-/// token from, since a netrc file is the only place it reads credentials.
-/// The username isn't read.
-fn basic_password(header: Option<&str>) -> Result<String, v1::Error> {
+/// The upload token in an `Authorization` header: the password of its HTTP
+/// Basic credentials, since a netrc file is the only place Nix sends
+/// credentials from. The username isn't read.
+fn token_from_header(header: Option<&str>) -> Result<String, v1::Error> {
     let unauthorized = |message: &str| v1::Error::new(ErrorCode::Unauthorized, message);
     let Some(header) = header else {
         return Err(unauthorized("missing credentials"));
@@ -239,15 +239,15 @@ mod tests {
     #[test]
     fn the_token_is_the_basic_password_whatever_the_username() {
         for user in ["oidc", "actions", "x"] {
-            let password = basic_password(Some(&basic(user, "a.b.c"))).map_err(said);
-            assert_eq!(password, Ok("a.b.c".to_string()));
+            let token = token_from_header(Some(&basic(user, "a.b.c"))).map_err(said);
+            assert_eq!(token, Ok("a.b.c".to_string()));
         }
     }
 
     #[test]
     fn a_missing_or_malformed_header_is_unauthorized() {
         for header in [None, Some("Bearer abc"), Some(basic("oidc", "").as_str())] {
-            let err = basic_password(header).unwrap_err();
+            let err = token_from_header(header).unwrap_err();
             assert_eq!(err.error, ErrorCode::Unauthorized, "{header:?}");
         }
     }
