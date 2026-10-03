@@ -8,14 +8,13 @@
 //! serves nothing until it's fixed. The signing key's value is read only when
 //! an upload needs signing, since reading it is async.
 //!
-//! The provider list's format is here too: [`ProviderConfig`], its claim sets
-//! and their patterns, and what parsing checks. Checking a token against it
-//! is in the auth [`layer`](super::layer).
+//! The provider list's format is here too: [`ProviderConfig`], a
+//! [`Provider`] with the claim sets that let its tokens upload, and what
+//! parsing checks. Verifying a token against it is cf-oidc-core's, which the
+//! auth [`layer`](super::layer) calls.
 
-use std::collections::BTreeMap;
-
+use cf_oidc_core::{ClaimRules, Provider, Providers};
 use serde::Deserialize;
-use serde_json::{Map, Value};
 use worker::{Bucket, Env, Error, SecretStore, send::SendWrapper};
 
 /// The binding of the R2 bucket every narinfo and NAR is stored in.
@@ -34,7 +33,7 @@ pub struct Config {
     /// `CF_NIX_CACHE_API_SECRET`'s binding, not yet its value.
     secret: SecretConfig,
     /// `CF_NIX_CACHE_API_OIDC_PROVIDERS`. None turns uploads off.
-    providers: Vec<ProviderConfig>,
+    providers: Providers<ProviderConfig>,
 }
 
 impl Config {
@@ -58,7 +57,7 @@ impl Config {
     }
 
     /// The providers whose tokens may upload: none if uploads are off.
-    pub fn providers(&self) -> &[ProviderConfig] {
+    pub fn providers(&self) -> &Providers<ProviderConfig> {
         &self.providers
     }
 
@@ -89,20 +88,42 @@ impl BucketConfig {
 #[serde(deny_unknown_fields)]
 pub struct ProviderConfig {
     /// Matched exactly against a token's `iss`.
-    pub(super) issuer: String,
+    issuer: String,
     /// Expected `aud`. A trailing `/` is ignored, here and in the token.
-    pub(super) audience: String,
-    /// Where its keys are. `None` means its discovery document says.
+    audience: String,
+    /// Where its keys are. `None` means its metadata says.
     #[serde(default)]
-    pub(super) jwks_uri: Option<String>,
+    jwks_uri: Option<String>,
+    /// The `typ` its tokens must have: `at+jwt` for a cf-oidc-exchange
+    /// broker's, so no other token it signs can upload. `None` takes any.
+    #[serde(default)]
+    typ: Option<String>,
     /// A token is accepted if any claim set matches; the first one wins.
-    pub(super) claims: Vec<ClaimSet>,
+    pub(super) claims: ClaimRules,
+}
+
+impl Provider for ProviderConfig {
+    fn issuer(&self) -> &str {
+        &self.issuer
+    }
+
+    fn audience(&self) -> &str {
+        &self.audience
+    }
+
+    fn jwks_uri(&self) -> Option<&str> {
+        self.jwks_uri.as_deref()
+    }
+
+    fn typ(&self) -> Option<&str> {
+        self.typ.as_deref()
+    }
 }
 
 impl ProviderConfig {
     /// The providers in `CF_NIX_CACHE_API_OIDC_PROVIDERS`: none if it's unset
     /// or empty, which turns uploads off.
-    fn from_env(env: &Env) -> worker::Result<Vec<Self>> {
+    fn from_env(env: &Env) -> worker::Result<Providers<Self>> {
         let value = env.var(PROVIDERS_KEY).ok().map(|value| value.to_string());
         Self::from_var(value.as_deref()).map_err(Error::RustError)
     }
@@ -113,173 +134,29 @@ impl ProviderConfig {
     /// # Errors
     ///
     /// Why `value` isn't a valid provider list.
-    pub fn from_var(value: Option<&str>) -> Result<Vec<Self>, String> {
+    pub fn from_var(value: Option<&str>) -> Result<Providers<Self>, String> {
         match value.filter(|value| !value.is_empty()) {
             Some(value) => Self::parse(value),
-            None => Ok(Vec::new()),
+            None => Ok(Providers::from(Vec::new())),
         }
     }
 
-    fn parse(json: &str) -> Result<Vec<Self>, String> {
-        let providers: Vec<Self> = serde_json::from_str(json).map_err(|err| {
+    /// The providers in `json`, checked: cf-oidc-core checks the providers,
+    /// and each one's claim sets, saying where anything's wrong.
+    fn parse(json: &str) -> Result<Providers<Self>, String> {
+        let providers: Providers<Self> = serde_json::from_str(json).map_err(|err| {
             format!(
-                "{PROVIDERS_KEY} must be a JSON array of {{ issuer, audience, jwks_uri?, claims }}: {err}"
+                "{PROVIDERS_KEY} must be a JSON array of {{ issuer, audience, jwks_uri?, typ?, claims }}: {err}"
             )
         })?;
-        if providers.is_empty() {
-            return Err(format!("{PROVIDERS_KEY} must name at least one provider"));
-        }
+        providers.check(PROVIDERS_KEY)?;
         for (index, provider) in providers.iter().enumerate() {
-            provider.check(&format!("{PROVIDERS_KEY}[{index}]"))?;
-            if providers[..index]
-                .iter()
-                .any(|other| other.issuer == provider.issuer)
-            {
-                return Err(format!(
-                    "{PROVIDERS_KEY}[{index}]: {} is configured twice",
-                    provider.issuer
-                ));
-            }
+            provider
+                .claims
+                .check(&format!("{PROVIDERS_KEY}[{index}].claims"))?;
         }
         Ok(providers)
     }
-
-    /// What deserializing can't check.
-    fn check(&self, at: &str) -> Result<(), String> {
-        check_url(&self.issuer).map_err(|why| format!("{at}.issuer {why}"))?;
-        if let Some(jwks_uri) = &self.jwks_uri {
-            check_url(jwks_uri).map_err(|why| format!("{at}.jwks_uri {why}"))?;
-        }
-        if self.audience.trim_end_matches('/').is_empty() {
-            return Err(format!("{at}.audience must not be empty"));
-        }
-        if self.claims.is_empty() {
-            return Err(format!("{at}.claims must contain at least one claim set"));
-        }
-        Ok(())
-    }
-
-    /// Whether `aud`, one of a token's audiences, is this issuer's.
-    pub(super) fn audience_is(&self, aud: &str) -> bool {
-        aud.trim_end_matches('/') == self.audience.trim_end_matches('/')
-    }
-}
-
-/// Whether `url` is somewhere keys may be fetched from: HTTPS, or plain HTTP
-/// on a loopback address, for a local issuer in development.
-pub(super) fn check_url(url: &str) -> Result<(), &'static str> {
-    let loopback = ["http://127.0.0.1", "http://localhost", "http://[::1]"]
-        .iter()
-        .any(|prefix| {
-            url.strip_prefix(prefix)
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with([':', '/']))
-        });
-    let https = url
-        .strip_prefix("https://")
-        .is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'));
-    if url.contains(char::is_whitespace) || !(https || loopback) {
-        return Err("must be an https:// URL");
-    }
-    Ok(())
-}
-
-/// Claim name to pattern. Matches when every claim matches.
-#[derive(Debug, Deserialize)]
-#[serde(try_from = "Map<String, Value>")]
-pub(super) struct ClaimSet(BTreeMap<String, Pattern>);
-
-impl TryFrom<Map<String, Value>> for ClaimSet {
-    type Error = String;
-
-    fn try_from(raw: Map<String, Value>) -> Result<Self, String> {
-        if raw.is_empty() {
-            return Err("a claim set must match at least one claim".to_string());
-        }
-
-        let mut claims = BTreeMap::new();
-        for (claim, value) in raw {
-            // IDs may be written as JSON numbers; most issuers send strings.
-            let pattern = match value {
-                Value::String(s) if !s.is_empty() => s,
-                Value::Number(n) if n.is_u64() => n.to_string(),
-                Value::Bool(b) => b.to_string(),
-                _ => {
-                    return Err(format!(
-                        "claim {claim} must be a non-empty string, a number or a boolean"
-                    ));
-                }
-            };
-            let pattern = Pattern::parse(&pattern)
-                .filter(|pattern| !is_id_claim(&claim) || matches!(pattern, Pattern::Exact(_)))
-                .ok_or_else(|| {
-                    if is_id_claim(&claim) {
-                        format!("claim {claim}: ID claims must match exactly")
-                    } else {
-                        format!("claim {claim}: * may only end a pattern, after a prefix")
-                    }
-                })?;
-            claims.insert(claim, pattern);
-        }
-        Ok(Self(claims))
-    }
-}
-
-impl ClaimSet {
-    pub(super) fn matches(&self, claims: &Map<String, Value>) -> bool {
-        self.0
-            .iter()
-            .all(|(claim, pattern)| match claims.get(claim) {
-                // A list claim (`groups`, `amr`) matches if any entry does.
-                Some(Value::Array(values)) => {
-                    values.iter().any(|value| pattern.matches_value(value))
-                }
-                Some(value) => pattern.matches_value(value),
-                None => false,
-            })
-    }
-}
-
-/// A claim's expected value: exact, or a prefix written with one trailing
-/// `*` (`example-org/*`). `*_id` claims must be exact.
-#[derive(Debug, PartialEq)]
-enum Pattern {
-    Exact(String),
-    Prefix(String),
-}
-
-impl Pattern {
-    /// `None` for a `*` anywhere but at the end of a non-empty prefix.
-    fn parse(pattern: &str) -> Option<Self> {
-        match pattern.strip_suffix('*') {
-            Some(prefix) if !prefix.is_empty() && !prefix.contains('*') => {
-                Some(Self::Prefix(prefix.to_string()))
-            }
-            Some(_) => None,
-            None if pattern.contains('*') => None,
-            None => Some(Self::Exact(pattern.to_string())),
-        }
-    }
-
-    fn matches(&self, value: &str) -> bool {
-        match self {
-            Self::Exact(expected) => value == expected,
-            Self::Prefix(prefix) => value.starts_with(prefix.as_str()),
-        }
-    }
-
-    /// Numbers and booleans compare as they're written in JSON.
-    fn matches_value(&self, value: &Value) -> bool {
-        match value {
-            Value::String(s) => self.matches(s),
-            Value::Number(n) => self.matches(&n.to_string()),
-            Value::Bool(b) => self.matches(if *b { "true" } else { "false" }),
-            _ => false,
-        }
-    }
-}
-
-fn is_id_claim(claim: &str) -> bool {
-    claim.ends_with("_id")
 }
 
 /// Where the narinfo signing key is.
@@ -317,16 +194,15 @@ impl SecretConfig {
 }
 
 #[cfg(test)]
-pub(super) mod tests {
-    use serde_json::json;
+mod tests {
+    use serde_json::{Value, json};
 
     use super::*;
 
-    pub(crate) const NOW: u64 = 1_800_000_000;
-    pub(crate) const ISSUER: &str = "https://issuer.example.com";
+    const ISSUER: &str = "https://issuer.example.com";
 
     /// One provider with these claim sets.
-    pub(crate) fn config(issuer: &str, claims: Value) -> Vec<ProviderConfig> {
+    fn config(issuer: &str, claims: Value) -> Providers<ProviderConfig> {
         let json = json!([{
             "issuer": issuer,
             "audience": "https://cache.example.com",
@@ -337,26 +213,6 @@ pub(super) mod tests {
 
     fn parse_err(json: Value) -> String {
         ProviderConfig::parse(&json.to_string()).unwrap_err()
-    }
-
-    pub(crate) fn claims() -> Map<String, Value> {
-        json!({
-            "iss": ISSUER,
-            "aud": "https://cache.example.com",
-            "sub": "repo:example-org/app:ref:refs/heads/main",
-            "exp": NOW + 300,
-            "nbf": NOW - 10,
-            "iat": NOW - 10,
-            "repository": "example-org/app",
-            "repository_id": "200000002",
-            "repository_owner_id": "100000001",
-            "ref": "refs/heads/main",
-            "groups": ["cache-readers", "cache-uploaders"],
-            "email_verified": true,
-        })
-        .as_object()
-        .unwrap()
-        .clone()
     }
 
     #[test]
@@ -380,8 +236,14 @@ pub(super) mod tests {
                 json!([{ "issuer": ISSUER, "claims": [] }]),
                 "missing field `audience`",
             ),
-            (json!([issuer(ISSUER), issuer(ISSUER)]), "configured twice"),
-            (json!([issuer("http://issuer.example.com")]), "https://"),
+            (
+                json!([issuer(ISSUER), issuer(ISSUER)]),
+                "CF_NIX_CACHE_API_OIDC_PROVIDERS[1]: https://issuer.example.com is configured twice",
+            ),
+            (
+                json!([issuer("http://issuer.example.com")]),
+                "CF_NIX_CACHE_API_OIDC_PROVIDERS[0].issuer must be an https:// URL",
+            ),
             (json!([issuer("https://")]), "https://"),
             (
                 json!([{ "issuer": ISSUER, "audience": "https://cache.example.com", "claims": [{ "ref": "x" }], "extra": 1 }]),
@@ -433,33 +295,19 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn audience_ignores_a_trailing_slash_on_either_side() {
-        let json = json!([{ "issuer": ISSUER, "audience": "https://cache.example.com/", "claims": [{ "ref": "x" }] }]);
-        let config = ProviderConfig::parse(&json.to_string()).unwrap();
-        let provider = &config[0];
-        assert!(provider.audience_is("https://cache.example.com"));
-        assert!(provider.audience_is("https://cache.example.com/"));
-        assert!(!provider.audience_is("https://cache.example.com.evil"));
-    }
-
-    #[test]
     fn config_rejects_bad_claim_sets() {
         let cases = [
-            (json!([]), "at least one claim set"),
+            (
+                json!([]),
+                "CF_NIX_CACHE_API_OIDC_PROVIDERS[0].claims must contain at least one claim set",
+            ),
             (json!([{}]), "a claim set must match at least one claim"),
             (
                 json!([{ "repository_id": "2000*" }]),
                 "claim repository_id: ID claims must match exactly",
             ),
             (json!([{ "ref": "" }]), "non-empty string"),
-            (json!([{ "ref": null }]), "non-empty string"),
-            (
-                json!([{ "ref": "*" }]),
-                "claim ref: * may only end a pattern",
-            ),
             (json!([{ "ref": "*main" }]), "may only end a pattern"),
-            (json!([{ "ref": "refs/*/main" }]), "may only end a pattern"),
-            (json!([{ "ref": "refs/**" }]), "may only end a pattern"),
         ];
         for (claims, expected) in cases {
             let err = parse_err(json!([{ "issuer": ISSUER, "audience": "x", "claims": claims }]));
@@ -468,52 +316,13 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn pattern_is_exact_or_a_trailing_prefix() {
-        let parse = |p| Pattern::parse(p).unwrap();
-        assert!(parse("example-org/*").matches("example-org/app"));
-        assert!(parse("refs/heads/*").matches("refs/heads/feature/x"));
-        assert!(parse("refs/heads/main").matches("refs/heads/main"));
-        assert!(!parse("refs/heads/main").matches("refs/heads/main2"));
-        assert!(!parse("example-org/*").matches("other-org/app"));
-        for pattern in ["*", "*x", "a*b", "a**"] {
-            assert_eq!(Pattern::parse(pattern), None, "{pattern}");
-        }
-    }
-
-    #[test]
-    fn claim_set_needs_every_claim_to_match() {
-        let config = config(
-            ISSUER,
-            json!([{ "repository": "example-org/*", "ref": "refs/heads/main" }]),
-        );
-        let set = &config[0].claims[0];
-        assert!(set.matches(&claims()));
-
-        let mut other_ref = claims();
-        other_ref.insert("ref".into(), "refs/heads/dev".into());
-        assert!(!set.matches(&other_ref));
-    }
-
-    #[test]
-    fn claim_set_matches_lists_numbers_and_booleans() {
-        let config = config(
-            ISSUER,
-            json!([
-                { "groups": "cache-uploaders" },
-                { "email_verified": true },
-                { "repository_id": 200000002 },
-                { "groups": "admins" },
-                { "environment": "release" },
-            ]),
-        );
-        let sets = &config[0].claims;
-        assert!(
-            sets[0].matches(&claims()),
-            "a list matches if any entry does"
-        );
-        assert!(sets[1].matches(&claims()), "booleans compare as written");
-        assert!(sets[2].matches(&claims()), "numbers compare as written");
-        assert!(!sets[3].matches(&claims()));
-        assert!(!sets[4].matches(&claims()), "a missing claim never matches");
+    fn config_takes_the_typ_a_providers_tokens_must_have() {
+        let json = json!([
+            { "issuer": ISSUER, "audience": "x", "claims": [{ "ref": "x" }] },
+            { "issuer": "https://broker.example.com", "audience": "x", "typ": "at+jwt", "claims": [{ "profile": "nix-push" }] },
+        ]);
+        let providers = ProviderConfig::parse(&json.to_string()).unwrap();
+        assert_eq!(providers[0].typ(), None);
+        assert_eq!(providers[1].typ(), Some(cf_oidc_core::AT_JWT));
     }
 }

@@ -224,7 +224,7 @@ async fn test_put_says_why_a_token_is_refused() {
         (
             "iss",
             json!("https://other.example.com"),
-            "issuer https://other.example.com is not configured".to_string(),
+            "no provider is for issuer https://other.example.com".to_string(),
         ),
         (
             "aud",

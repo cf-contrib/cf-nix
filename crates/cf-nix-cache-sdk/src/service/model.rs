@@ -23,6 +23,34 @@ impl Error {
     }
 }
 
+#[cfg(feature = "server")]
+impl ErrorCode {
+    /// The status an error with this code is answered with, as the spec's
+    /// responses have it.
+    pub fn status(&self) -> axum::http::StatusCode {
+        use axum::http::StatusCode;
+        match self {
+            ErrorCode::BadRequest => StatusCode::BAD_REQUEST,
+            ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
+            ErrorCode::Forbidden => StatusCode::FORBIDDEN,
+            ErrorCode::NotFound => StatusCode::NOT_FOUND,
+            ErrorCode::Misconfigured | ErrorCode::InternalError => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+            ErrorCode::UpstreamError => StatusCode::BAD_GATEWAY,
+        }
+    }
+}
+
+/// The error as a response outside the generated routes, such as from a
+/// layer over them: its code's status, and the JSON every error has.
+#[cfg(feature = "server")]
+impl axum::response::IntoResponse for Error {
+    fn into_response(self) -> axum::response::Response {
+        (self.error.status(), axum::Json(self)).into_response()
+    }
+}
+
 /// A parsed `.narinfo`, borrowing from its text.
 ///
 /// Parsing follows Nix's own parser (`NarInfo::NarInfo` in libstore's

@@ -235,6 +235,7 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "cf-nix-cache-sdk",
+ "cf-oidc-core",
  "http-auth-basic",
  "http-body-util",
  "rand_chacha",
@@ -242,11 +243,9 @@ dependencies = [
  "rsa",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "tokio",
  "tower-layer",
  "tower-service",
- "web-sys",
  "worker",
  "worker-macros",
 ]
@@ -271,6 +270,19 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "cf-oidc-core"
+version = "0.8.0"
+source = "git+https://github.com/cf-contrib/cf-oidc-auth?rev=c932a17e26c456613e7a443c65a26f28a80d4878#c932a17e26c456613e7a443c65a26f28a80d4878"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "web-sys",
+ "worker",
 ]
 
 [[package]]
