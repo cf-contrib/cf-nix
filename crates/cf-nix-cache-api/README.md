@@ -31,7 +31,7 @@ audience, and matching one of that issuer's claim sets.
 | Binding | Type | Required | Description |
 |---|---|---|---|
 | `CF_NIX_CACHE_API_BUCKET` | R2 bucket | yes | Stores `.narinfo` and `.nar` objects. |
-| `CF_NIX_CACHE_API_SECRET` | Secrets Store secret | conditional | `<key-name>:<base64>`, as emitted by `nix key generate-secret`. Required unless every uploader sends signed narinfo. A plain secret or var also works, e.g. for `wrangler dev`. |
+| `CF_NIX_CACHE_API_SECRET` | Secrets Store secret | conditional | `<key-name>:<base64>`, as emitted by `nix key generate-secret`. Required unless every uploader sends signed narinfo. Only a Secrets Store binding is taken: bound as a plain secret or var, the Worker refuses to start, so the key never passes through Terraform or a command line. |
 | `CF_NIX_CACHE_API_OIDC_PROVIDERS` | var | for uploads | JSON array of the identity providers whose tokens may upload; see [Authentication](#authentication). Unset, uploads are off. |
 
 ## Authentication
@@ -237,6 +237,15 @@ document shows up as a compile error here. Run everything inside the dev shell:
 nix develop -c cargo test           # unit tests, from the repo root
 nix develop -c worker-build --dev   # build the bundle into ./build (this directory)
 nix develop -c wrangler dev         # serve locally (this directory)
+```
+
+To sign uploads locally, put a signing key in the local Secrets Store that
+`wrangler.toml` binds; Wrangler prompts for the value, so it stays off the
+command line. Without one, only narinfo the uploader signed can be stored.
+
+```bash
+nix key generate-secret --key-name local-dev   # a throwaway key: copy the line it prints
+nix develop -c wrangler secrets-store secret create 00000000000000000000000000000000 --name signing-key --scopes workers   # paste it when prompted
 ```
 
 The integration tests call `wrangler dev` through the SDK's client. They run

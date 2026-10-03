@@ -4,9 +4,10 @@
 //! builds one per request and hands it to the handler and the auth layer,
 //! which take what they need from it.
 //!
-//! An unbound bucket or an invalid provider list fails it, and the Worker
-//! serves nothing until it's fixed. The signing key's value is read only when
-//! an upload needs signing, since reading it is async.
+//! An unbound bucket, an invalid provider list, or a signing key that isn't a
+//! Secrets Store binding fails it, and the Worker serves nothing until it's
+//! fixed. The signing key's value is read only when an upload needs signing,
+//! since reading it is async, so a rotated one takes effect on the next.
 //!
 //! The provider list's format is here too: [`ProviderConfig`], a
 //! [`Provider`] with the claim sets that let its tokens upload, and what
@@ -15,12 +16,13 @@
 
 use cf_oidc_core::{ClaimRules, Provider, Providers};
 use serde::Deserialize;
-use worker::{Bucket, Env, Error, SecretStore, send::SendWrapper};
+use worker::{Bucket, Env, Error, SecretStore, js_sys, send::SendWrapper, wasm_bindgen::JsValue};
 
 /// The binding of the R2 bucket every narinfo and NAR is stored in.
 pub const BUCKET_KEY: &str = "CF_NIX_CACHE_API_BUCKET";
 
-/// The binding of the narinfo signing key.
+/// The binding of the narinfo signing key, `<key-name>:<base64>`. Optional:
+/// without it, only narinfo the uploader signed can be stored.
 pub const SECRET_KEY: &str = "CF_NIX_CACHE_API_SECRET";
 
 /// The binding of the providers whose tokens may upload.
@@ -30,8 +32,9 @@ pub const PROVIDERS_KEY: &str = "CF_NIX_CACHE_API_OIDC_PROVIDERS";
 pub struct Config {
     /// `CF_NIX_CACHE_API_BUCKET`.
     bucket: BucketConfig,
-    /// `CF_NIX_CACHE_API_SECRET`'s binding, not yet its value.
-    secret: SecretConfig,
+    /// `CF_NIX_CACHE_API_SECRET`'s binding, not yet its value. None signs
+    /// nothing.
+    signing_key: Option<Secret>,
     /// `CF_NIX_CACHE_API_OIDC_PROVIDERS`. None turns uploads off.
     providers: Providers<ProviderConfig>,
 }
@@ -41,12 +44,13 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// When `CF_NIX_CACHE_API_BUCKET` isn't bound to an R2 bucket, or
+    /// When `CF_NIX_CACHE_API_BUCKET` isn't bound to an R2 bucket,
+    /// `CF_NIX_CACHE_API_SECRET` is bound but not from Secrets Store, or
     /// `CF_NIX_CACHE_API_OIDC_PROVIDERS` isn't a valid provider list.
     pub fn from_env(env: &Env) -> worker::Result<Self> {
         Ok(Self {
             bucket: BucketConfig::from_env(env)?,
-            secret: SecretConfig::from_env(env),
+            signing_key: Secret::from_env(env, SECRET_KEY)?,
             providers: ProviderConfig::from_env(env)?,
         })
     }
@@ -62,9 +66,12 @@ impl Config {
     }
 
     /// Reads the narinfo signing key, `<key-name>:<base64>`, or `None` if
-    /// none is configured.
-    pub async fn secret(&self) -> worker::Result<Option<String>> {
-        self.secret.read().await
+    /// none is bound.
+    pub async fn signing_key(&self) -> worker::Result<Option<String>> {
+        match &self.signing_key {
+            Some(secret) => secret.read().await.map(Some),
+            None => Ok(None),
+        }
     }
 }
 
@@ -102,6 +109,7 @@ pub struct ProviderConfig {
     pub(super) claims: ClaimRules,
 }
 
+/// What the auth layer verifies a token from it against.
 impl Provider for ProviderConfig {
     fn issuer(&self) -> &str {
         &self.issuer
@@ -159,36 +167,38 @@ impl ProviderConfig {
     }
 }
 
-/// Where the narinfo signing key is.
+/// A secret in Secrets Store, read when it's used.
 ///
-/// Deployments bind it from Secrets Store, so the key never passes through
-/// Terraform. `wrangler dev` and plain `secret_text` bindings are read as a
-/// var.
-enum SecretConfig {
-    /// A Secrets Store binding, read when an upload needs signing.
-    Store(SecretStore),
-    /// A plain secret or var.
-    Text(String),
-    /// Neither: only narinfo the uploader signed can be stored.
-    Unset,
+/// Bound as anything else, a plain Worker secret or a var say, it's refused
+/// rather than taken as a weaker setup: a Secrets Store secret never passes
+/// through Terraform, or a command line.
+struct Secret {
+    key: &'static str,
+    store: SecretStore,
 }
 
-impl SecretConfig {
-    fn from_env(env: &Env) -> Self {
-        if let Ok(store) = env.secret_store(SECRET_KEY) {
-            return Self::Store(store);
+impl Secret {
+    /// The secret bound as `key`, or `None` if nothing is.
+    fn from_env(env: &Env, key: &'static str) -> worker::Result<Option<Self>> {
+        if let Ok(store) = env.secret_store(key) {
+            return Ok(Some(Self { key, store }));
         }
-        match env.var(SECRET_KEY) {
-            Ok(secret) => Self::Text(secret.to_string()),
-            Err(_) => Self::Unset,
+        let bound = js_sys::Reflect::get(env.as_ref(), &JsValue::from_str(key))
+            .is_ok_and(|binding| !binding.is_undefined());
+        if bound {
+            return Err(Error::RustError(format!(
+                "{key} must be a Secrets Store binding"
+            )));
         }
+        Ok(None)
     }
 
-    async fn read(&self) -> worker::Result<Option<String>> {
-        match self {
-            Self::Store(store) => store.get().await,
-            Self::Text(secret) => Ok(Some(secret.clone())),
-            Self::Unset => Ok(None),
+    async fn read(&self) -> worker::Result<String> {
+        let key = self.key;
+        match self.store.get().await {
+            Ok(Some(value)) if !value.is_empty() => Ok(value),
+            Ok(_) => Err(Error::RustError(format!("{key} is empty"))),
+            Err(err) => Err(Error::RustError(format!("{key} can't be read: {err}"))),
         }
     }
 }
@@ -199,108 +209,122 @@ mod tests {
 
     use super::*;
 
-    const ISSUER: &str = "https://issuer.example.com";
+    const ISSUER: &str = "https://token.actions.githubusercontent.com";
+    const BROKER: &str = "https://cf-oidc-exchange.example.com";
+    const CACHE: &str = "https://cache.example.com";
 
-    /// One provider with these claim sets.
-    fn config(issuer: &str, claims: Value) -> Providers<ProviderConfig> {
-        let json = json!([{
-            "issuer": issuer,
-            "audience": "https://cache.example.com",
-            "claims": claims,
-        }]);
-        ProviderConfig::parse(&json.to_string()).expect("config should parse")
+    /// A provider list: GitHub Actions, pinned to the test org, and a
+    /// cf-oidc-exchange broker, whose access tokens only.
+    fn providers() -> Value {
+        json!([
+            { "issuer": ISSUER, "audience": CACHE, "claims": [{ "repository_owner_id": "100000001" }] },
+            { "issuer": BROKER, "audience": CACHE, "typ": "at+jwt", "claims": [{ "profile": "nix-push" }] },
+        ])
     }
 
-    fn parse_err(json: Value) -> String {
-        ProviderConfig::parse(&json.to_string()).unwrap_err()
+    fn parse(providers: &Value) -> Providers<ProviderConfig> {
+        ProviderConfig::parse(&providers.to_string()).expect("the providers should parse")
+    }
+
+    fn parse_err(providers: &Value) -> String {
+        ProviderConfig::parse(&providers.to_string()).unwrap_err()
+    }
+
+    /// The test providers, with `pointer` set to `value`.
+    fn with(pointer: &str, value: Value) -> Value {
+        let mut providers = providers();
+        let (parent, key) = pointer.rsplit_once('/').unwrap();
+        match providers.pointer_mut(parent).unwrap() {
+            Value::Object(map) => map.insert(key.to_string(), value),
+            Value::Array(list) => {
+                list.push(value);
+                None
+            }
+            _ => unreachable!(),
+        };
+        providers
     }
 
     #[test]
-    fn config_is_off_without_providers() {
+    fn parses_the_test_providers() {
+        let providers = parse(&providers());
+        assert_eq!(providers.len(), 2);
+        assert_eq!(providers[0].typ(), None);
+        assert_eq!(providers[1].typ(), Some(cf_oidc_core::AT_JWT));
+    }
+
+    #[test]
+    fn uploads_are_off_without_providers() {
         assert!(ProviderConfig::from_var(None).unwrap().is_empty());
         assert!(ProviderConfig::from_var(Some("")).unwrap().is_empty());
     }
 
     #[test]
-    fn config_fails_closed() {
+    fn fails_closed() {
         assert!(ProviderConfig::from_var(Some("not json")).is_err());
     }
 
     #[test]
-    fn config_rejects_bad_issuer_lists() {
-        let issuer = |issuer: &str| json!({ "issuer": issuer, "audience": "https://cache.example.com", "claims": [{ "ref": "x" }] });
+    fn rejects_bad_providers() {
+        let key = PROVIDERS_KEY;
         let cases = [
-            (json!("not a list"), "JSON array"),
-            (json!([]), "at least one provider"),
+            (json!("not a list"), "JSON array".to_string()),
+            (json!([]), "at least one provider".to_string()),
             (
-                json!([{ "issuer": ISSUER, "claims": [] }]),
-                "missing field `audience`",
+                with("/0/claims", json!([])),
+                format!("{key}[0].claims must contain at least one claim set"),
             ),
             (
-                json!([issuer(ISSUER), issuer(ISSUER)]),
-                "CF_NIX_CACHE_API_OIDC_PROVIDERS[1]: https://issuer.example.com is configured twice",
+                with("/0/audience", json!("/")),
+                format!("{key}[0].audience must not be empty"),
             ),
             (
-                json!([issuer("http://issuer.example.com")]),
-                "CF_NIX_CACHE_API_OIDC_PROVIDERS[0].issuer must be an https:// URL",
+                with("/0/issuer", json!("http://issuer.example.com")),
+                format!("{key}[0].issuer must be an https:// URL"),
             ),
-            (json!([issuer("https://")]), "https://"),
             (
-                json!([{ "issuer": ISSUER, "audience": "https://cache.example.com", "claims": [{ "ref": "x" }], "extra": 1 }]),
-                "unknown field `extra`",
+                with("/0/jwks_uri", json!("http://keys.example.com")),
+                format!("{key}[0].jwks_uri must be an https:// URL"),
+            ),
+            (
+                with(
+                    "/-",
+                    json!({ "issuer": ISSUER, "audience": CACHE, "claims": [{ "x": "y" }] }),
+                ),
+                format!("{key}[2]: {ISSUER} is configured twice"),
+            ),
+            (
+                with("/0/extra", json!(1)),
+                "unknown field `extra`".to_string(),
             ),
         ];
-        for (json, expected) in cases {
-            let err = parse_err(json.clone());
-            assert!(err.contains(expected), "{json}: {err}");
+        for (providers, expected) in cases {
+            let err = parse_err(&providers);
+            assert!(err.contains(&expected), "{expected}: {err}");
         }
     }
 
     #[test]
-    fn config_allows_http_only_on_loopback() {
+    fn allows_http_only_on_loopback() {
         for issuer in [
             "http://127.0.0.1:8788",
             "http://localhost",
             "http://[::1]:9000/oidc",
         ] {
-            config(issuer, json!([{ "ref": "x" }]));
+            parse(&with("/0/issuer", json!(issuer)));
         }
         for issuer in [
             "http://127.0.0.1.example.com",
             "http://localhost.example.com",
         ] {
-            let err = parse_err(
-                json!([{ "issuer": issuer, "audience": "x", "claims": [{ "ref": "x" }] }]),
-            );
+            let err = parse_err(&with("/0/issuer", json!(issuer)));
             assert!(err.contains("https://"), "{issuer}: {err}");
         }
     }
 
     #[test]
-    fn config_rejects_bad_audiences_and_jwks_uris() {
+    fn rejects_bad_claim_sets() {
         let cases = [
-            (
-                json!([{ "issuer": ISSUER, "audience": "/", "claims": [{ "ref": "x" }] }]),
-                "audience must not be empty",
-            ),
-            (
-                json!([{ "issuer": ISSUER, "audience": "x", "jwks_uri": "http://keys.example.com", "claims": [{ "ref": "x" }] }]),
-                "jwks_uri must be an https:// URL",
-            ),
-        ];
-        for (json, expected) in cases {
-            let err = parse_err(json.clone());
-            assert!(err.contains(expected), "{json}: {err}");
-        }
-    }
-
-    #[test]
-    fn config_rejects_bad_claim_sets() {
-        let cases = [
-            (
-                json!([]),
-                "CF_NIX_CACHE_API_OIDC_PROVIDERS[0].claims must contain at least one claim set",
-            ),
             (json!([{}]), "a claim set must match at least one claim"),
             (
                 json!([{ "repository_id": "2000*" }]),
@@ -310,19 +334,8 @@ mod tests {
             (json!([{ "ref": "*main" }]), "may only end a pattern"),
         ];
         for (claims, expected) in cases {
-            let err = parse_err(json!([{ "issuer": ISSUER, "audience": "x", "claims": claims }]));
+            let err = parse_err(&with("/0/claims", claims.clone()));
             assert!(err.contains(expected), "{claims}: {err}");
         }
-    }
-
-    #[test]
-    fn config_takes_the_typ_a_providers_tokens_must_have() {
-        let json = json!([
-            { "issuer": ISSUER, "audience": "x", "claims": [{ "ref": "x" }] },
-            { "issuer": "https://broker.example.com", "audience": "x", "typ": "at+jwt", "claims": [{ "profile": "nix-push" }] },
-        ]);
-        let providers = ProviderConfig::parse(&json.to_string()).unwrap();
-        assert_eq!(providers[0].typ(), None);
-        assert_eq!(providers[1].typ(), Some(cf_oidc_core::AT_JWT));
     }
 }
