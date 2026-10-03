@@ -26,9 +26,9 @@ tower-layer = "0.3"
 tower-service = "0.3"
 
 # Verifies upload tokens: their providers, keys and claim sets, through
-# WebCrypto. From cf-oidc-auth's main on GitHub, pinned to a commit: it isn't
-# published to crates.io.
-cf-oidc-core = { git = "https://github.com/cf-contrib/cf-oidc-auth", rev = "f10728e3f814d9e18aefe754deb2595e4f958d69" }
+# WebCrypto. From cf-oidc-auth's release on GitHub: it isn't published to
+# crates.io.
+cf-oidc-core = { git = "https://github.com/cf-contrib/cf-oidc-auth", tag = "v0.9.0" }
 
 # The provider list. Already in the tree via `worker`.
 serde = { version = "1", features = ["derive"] }

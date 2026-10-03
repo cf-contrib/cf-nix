@@ -275,9 +275,9 @@ dependencies = [
 [[package]]
 name = "cf-oidc-core"
 version = "0.8.0"
-source = "git+https://github.com/cf-contrib/cf-oidc-auth?rev=f10728e3f814d9e18aefe754deb2595e4f958d69#f10728e3f814d9e18aefe754deb2595e4f958d69"
+source = "git+https://github.com/cf-contrib/cf-oidc-auth?tag=v0.9.0#e932dc5db7c8e4589d8889c4f036a69456a118ea"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "serde",
  "serde_json",
  "sha2 0.11.0",
