@@ -95,8 +95,11 @@ impl<S> Authorize<S> {
             .and_then(|value| value.to_str().ok());
         let token = token_from_header(header)?;
 
-        let (provider, jwt) = providers.verify(&token).await.map_err(api_error)?;
-        let claims = provider.claims.authorize(&jwt.claims).map_err(api_error)?;
+        let (provider, jwt) = providers.verify(&token).await.map_err(error_from_core)?;
+        let claims = provider
+            .claims
+            .authorize(&jwt.claims)
+            .map_err(error_from_core)?;
         Ok(Identity {
             issuer: provider.issuer().to_string(),
             subject: jwt.claims.sub().unwrap_or_default().to_string(),
@@ -163,7 +166,7 @@ fn token_from_header(header: Option<&str>) -> Result<String, v1::Error> {
 /// uploader's to fix (`unauthorized`), one no claim set allows isn't theirs
 /// to have (`forbidden`), and an issuer that can't be reached isn't their
 /// fault (`upstream_error`).
-fn api_error(err: cf_oidc_core::Error) -> v1::Error {
+fn error_from_core(err: cf_oidc_core::Error) -> v1::Error {
     match err {
         cf_oidc_core::Error::InvalidToken(message) => {
             v1::Error::new(ErrorCode::Unauthorized, message)
@@ -188,8 +191,9 @@ fn api_error(err: cf_oidc_core::Error) -> v1::Error {
 /// libcurl does for a large one, otherwise waits for the body to be read, and
 /// the upload hangs instead of failing.
 ///
-/// An issuer that couldn't be reached isn't the uploader's to know about: what
-/// went wrong is logged, and the response only says it was the issuer.
+/// An issuer that couldn't be reached isn't the uploader's fault, so what
+/// went wrong is logged and the response only says it was the issuer, as
+/// cf-oidc-exchange answers its own faults.
 async fn reject(req: Request, mut err: v1::Error) -> Response {
     if err.error == ErrorCode::UpstreamError {
         console_error!("auth upstream failure: {}", err.message);
@@ -301,7 +305,7 @@ mod tests {
             ),
         ];
         for (err, code, message) in cases {
-            assert_eq!(said(api_error(err)), (code, message.to_string()));
+            assert_eq!(said(error_from_core(err)), (code, message.to_string()));
         }
     }
 }
