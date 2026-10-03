@@ -248,13 +248,23 @@ nix key generate-secret --key-name local-dev   # a throwaway key: copy the line 
 nix develop -c wrangler secrets-store secret create 00000000000000000000000000000000 --name signing-key --scopes workers   # paste it when prompted
 ```
 
-The integration tests call `wrangler dev` through the SDK's client. They run
-their own OIDC issuer on `127.0.0.1:8788`, the one `wrangler.toml` trusts, and
-upload with tokens it signs, so they need no credentials:
+The integration tests call the Worker under `wrangler dev` through the SDK's
+client. They run their own OIDC issuer on `127.0.0.1:8788`, the one
+`wrangler.toml` trusts, and upload with tokens it signs, so they need no
+credentials. `tests/run.sh` starts a `wrangler dev` of their own, on port 8789
+with its own local storage and a throwaway signing key, runs them, and stops
+it, so one you're running is left alone. CI runs it too:
 
 ```bash
-nix develop -c wrangler dev                                  # in one shell, this directory
-nix develop -c cargo test --features integration             # in another
+nix develop -c tests/run.sh                                  # this directory
+```
+
+To run them against a `wrangler dev` you've started instead, set
+`CF_NIX_CACHE_API_URL` if it isn't on `http://127.0.0.1:8787`, and its
+`CF_NIX_CACHE_API_OIDC_PROVIDERS` audience to match:
+
+```bash
+nix develop -c cargo test --features integration
 ```
 
 ## Dependencies
