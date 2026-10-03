@@ -92,7 +92,7 @@ does, and numbers and booleans compare as written (`"email_verified": "true"`).
 > for GitLab, `terraform_organization_id` for Terraform Cloud), or any project on
 > the issuer can upload. The Worker doesn't know which issuers these are: the
 > claim sets are the whole policy. Issuers that only give tokens to people who
-> passed your policy, like Cloudflare Access or a cf-oidc-auth broker, need no
+> passed your policy, like Cloudflare Access or a cf-oidc-exchange broker, need no
 > pin.
 
 The config is checked when an upload reads it. An invalid one fails closed:
@@ -118,11 +118,11 @@ Nix reads the netrc again for every request, so for a longer one, rewrite the
 file with a fresh token while `nix copy` runs. Keep the file readable only by
 you (`chmod 600`).
 
-### People: through cf-oidc-auth
+### People: through cf-oidc-exchange
 
 The cache takes OIDC tokens only, so a person needs one from an identity
 provider, such as a [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/validating-json/)
-application. A [cf-oidc-auth](https://github.com/cf-contrib/cf-oidc-auth)
+application. A [cf-oidc-exchange](https://github.com/cf-contrib/cf-oidc-exchange)
 broker exchanges it for a short-lived token of its own for the cache. Trust the
 broker as one more provider, for its access tokens only, pinned to the profile
 that issues for the cache:
@@ -138,8 +138,8 @@ that issues for the cache:
 
 The broker's profile decides who may upload, by the claims of the person's own
 token, `email` from Cloudflare Access say (see the broker's
-[People](https://github.com/cf-contrib/cf-oidc-auth/tree/main/crates/cf-oidc-exchange-api#people)
-and [Tokens for other services](https://github.com/cf-contrib/cf-oidc-auth/tree/main/crates/cf-oidc-exchange-api#tokens-for-other-services)).
+[People](https://github.com/cf-contrib/cf-oidc-exchange/tree/main/crates/cf-oidc-exchange-api#people)
+and [Tokens for other services](https://github.com/cf-contrib/cf-oidc-exchange/tree/main/crates/cf-oidc-exchange-api#tokens-for-other-services)).
 A person signs in once, then exchanges a token and uploads. The broker's token
 lasts the profile's `ttl`, never past the person's own; run it again once it
 has expired. No token goes on a command line, where the process list would
@@ -184,7 +184,7 @@ must use the content type Nix sends: `text/x-nix-narinfo` for narinfo and
 | `PUT` | `/nar/<hash>.nar` | token | Upload a NAR archive. |
 | `GET` | `/health/live`, `/health/ready` | public | `200` while the Worker is up and serving, and `500`, like every request, while its bucket is unbound or its provider list invalid. The SDK's `HealthHandler`; a deployment check, so not in the OpenAPI document. |
 
-**Errors** are JSON, in the shape cf-oidc-auth uses: `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of a failed upload, so the message says what to fix, except for `500` and `502`, whose details go only to the logs.
+**Errors** are JSON: `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of a failed upload, so the message says what to fix, except for `500` and `502`, whose details go only to the logs.
 
 | Status | `error` | Means |
 |---|---|---|
