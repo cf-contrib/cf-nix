@@ -59,9 +59,10 @@ variable "oidc_providers" {
     issuer   = string
     audience = optional(string)
     jwks_uri = optional(string)
+    typ      = optional(string)
     claims   = list(map(string))
   }))
-  description = "OIDC identity providers whose tokens may upload. A token is accepted if any claim set of its provider matches. audience defaults to the cache URL; jwks_uri to what the issuer's discovery document says. Empty turns uploads off."
+  description = "OIDC identity providers whose tokens may upload. A token is accepted if any claim set of its provider matches. audience defaults to the cache URL; jwks_uri to what the issuer's metadata says; typ, the type its tokens must have, to any (set \"at+jwt\" for a cf-oidc-exchange broker, so only its access tokens upload). Empty turns uploads off."
   default     = []
 
   validation {

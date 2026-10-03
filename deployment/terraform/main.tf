@@ -9,6 +9,7 @@ locals {
       for i in var.oidc_providers : merge(
         { issuer = i.issuer, audience = coalesce(i.audience, local.url), claims = i.claims },
         i.jwks_uri == null ? {} : { jwks_uri = i.jwks_uri },
+        i.typ == null ? {} : { typ = i.typ },
       )
     ])
   }
