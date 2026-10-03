@@ -275,7 +275,7 @@ dependencies = [
 [[package]]
 name = "cf-oidc-core"
 version = "0.8.0"
-source = "git+https://github.com/cf-contrib/cf-oidc-exchange?tag=v0.9.0#e932dc5db7c8e4589d8889c4f036a69456a118ea"
+source = "git+https://github.com/cf-contrib/cf-oidc-exchange?tag=v0.10.0#fdcc19d17b308da0d0b60a89104dd158fea15e14"
 dependencies = [
  "base64 0.23.1",
  "serde",
