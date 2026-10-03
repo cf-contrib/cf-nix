@@ -173,7 +173,7 @@ impl CacheServiceApi for CacheServiceHandler {
             let data = if !info.sigs.is_empty() {
                 body
             } else {
-                let secret = match self.config.secret().await {
+                let secret = match self.config.signing_key().await {
                     Ok(Some(secret)) => secret,
                     Ok(None) => {
                         return bad_request(

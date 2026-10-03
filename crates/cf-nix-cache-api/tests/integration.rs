@@ -224,14 +224,14 @@ async fn test_put_says_why_a_token_is_refused() {
         (
             "iss",
             json!("https://other.example.com"),
-            "issuer https://other.example.com is not configured".to_string(),
+            "no provider is for issuer https://other.example.com".to_string(),
         ),
         (
             "aud",
             json!("https://wrong.example.com"),
             format!(
                 "token audience is https://wrong.example.com, expected {}",
-                helper::BASE_URL
+                helper::base_url()
             ),
         ),
         ("exp", json!(now - 3600), "token expired".to_string()),
@@ -260,7 +260,7 @@ async fn test_put_forbids_a_token_no_claim_set_allows() {
 
 #[tokio::test]
 async fn test_health() {
-    let health = HealthClient::new(helper::BASE_URL);
+    let health = HealthClient::new(helper::base_url());
     assert!(health.is_live().await.expect("the request failed"));
     assert!(health.is_ready().await.expect("the request failed"));
 }

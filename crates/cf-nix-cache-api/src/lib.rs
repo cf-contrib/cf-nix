@@ -11,11 +11,7 @@ mod service;
 
 use std::sync::Arc;
 
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response as HttpResponse},
-};
+use axum::response::{IntoResponse, Response as HttpResponse};
 use cf_nix_cache_sdk::v1::{self, ErrorCode};
 use tower_service::Service;
 use worker::*;
@@ -42,8 +38,8 @@ async fn fetch(req: HttpRequest, env: Env, _ctx: Context) -> Result<HttpResponse
             let msg = err.to_string();
             axum::Router::new().fallback(move || async move {
                 console_error!("misconfigured: {msg}");
-                let body = v1::Error::new(ErrorCode::Misconfigured, "the cache is misconfigured");
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+                v1::Error::new(ErrorCode::Misconfigured, "the cache is misconfigured")
+                    .into_response()
             })
         }
     };

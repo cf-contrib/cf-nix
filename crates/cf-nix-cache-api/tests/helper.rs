@@ -18,8 +18,15 @@ use rsa::{
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
-/// Where `wrangler dev` serves the Worker, and the audience it expects.
-pub const BASE_URL: &str = "http://127.0.0.1:8787";
+/// Where `wrangler dev` serves the Worker, and the audience it expects:
+/// `CF_NIX_CACHE_API_URL`, which tests/run.sh sets for the one it starts, or
+/// `wrangler dev`'s own default.
+pub fn base_url() -> &'static str {
+    static BASE_URL: LazyLock<String> = LazyLock::new(|| {
+        std::env::var("CF_NIX_CACHE_API_URL").unwrap_or_else(|_| "http://127.0.0.1:8787".into())
+    });
+    &BASE_URL
+}
 
 /// The stand-in issuer `wrangler.toml` trusts. Its claim sets let in
 /// `repository_owner_id` 100000001 on `refs/heads/main`.
@@ -71,7 +78,7 @@ static ISSUER_SERVER: LazyLock<()> = LazyLock::new(|| {
 
 /// The SDK's client, pointed at `wrangler dev`.
 pub fn client() -> HttpClient {
-    HttpClient::new().with_base_url(BASE_URL)
+    HttpClient::new().with_base_url(base_url())
 }
 
 /// The SDK's client, sending `authorization` with every request, if given.
@@ -95,7 +102,7 @@ pub fn claims() -> Value {
         .as_secs();
     json!({
         "iss": ISSUER,
-        "aud": BASE_URL,
+        "aud": base_url(),
         "sub": "repo:example-org/app:ref:refs/heads/main",
         "iat": now,
         "nbf": now,
@@ -136,7 +143,7 @@ pub fn fixture(name: &str) -> Vec<u8> {
 
 /// Sends a plain GET, for what the typed client doesn't return: the headers.
 pub async fn get(path: &str) -> reqwest::Response {
-    reqwest::get(format!("{BASE_URL}/{path}"))
+    reqwest::get(format!("{}/{path}", base_url()))
         .await
         .expect("the request failed")
 }
@@ -145,7 +152,7 @@ pub async fn get(path: &str) -> reqwest::Response {
 /// client can't make: a content type the spec doesn't declare.
 pub async fn put(path: &str, content_type: &str, body: Vec<u8>) -> reqwest::Response {
     reqwest::Client::new()
-        .put(format!("{BASE_URL}/{path}"))
+        .put(format!("{}/{path}", base_url()))
         .header("content-type", content_type)
         .header("authorization", credentials())
         .body(body)

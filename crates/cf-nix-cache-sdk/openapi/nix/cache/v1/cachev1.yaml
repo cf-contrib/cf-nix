@@ -6,7 +6,7 @@ info:
     need an OIDC token from an issuer the Worker trusts, as the password of
     HTTP Basic credentials.
 
-    Errors are JSON, in the shape cf-oidc-auth uses. A request that doesn't fit
+    Errors are JSON, `{ error, message }`. A request that doesn't fit
     this document (a body over the size limit, the wrong content type) is
     rejected before it reaches the Worker, as `application/problem+json`.
   version: 0.6.0 # x-release-please-version
@@ -245,7 +245,7 @@ components:
   schemas:
     Error:
       type: object
-      description: An error, in the shape cf-oidc-auth uses.
+      description: An error, `{ error, message }`.
       required: [error, message]
       properties:
         error:

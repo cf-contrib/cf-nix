@@ -107,7 +107,7 @@ Also: this is a hobby project. I wanted an excuse to spend more time with Cloudf
            --option netrc-file "$RUNNER_TEMP/netrc" \
            ./result
    ```
-   The job's token lasts 5 minutes, so the upload has to finish within that. For other issuers, see the [Worker's README](crates/cf-nix-cache-api#authentication). People can upload with their `gh auth token` through a [cf-oidc-auth](https://github.com/cf-contrib/cf-oidc-auth) broker, with [one exchange](crates/cf-nix-cache-api#people-your-github-token-through-cf-oidc-auth) and no refresh.
+   The job's token lasts 5 minutes, so the upload has to finish within that. For other issuers, see the [Worker's README](crates/cf-nix-cache-api#authentication). People can upload with a token from their identity provider, such as Cloudflare Access, through a [cf-oidc-exchange](https://github.com/cf-contrib/cf-oidc-exchange) broker, with [one exchange](crates/cf-nix-cache-api#people-through-cf-oidc-exchange) and no refresh.
 
 ## Development
 

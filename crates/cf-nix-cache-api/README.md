@@ -31,7 +31,7 @@ audience, and matching one of that issuer's claim sets.
 | Binding | Type | Required | Description |
 |---|---|---|---|
 | `CF_NIX_CACHE_API_BUCKET` | R2 bucket | yes | Stores `.narinfo` and `.nar` objects. |
-| `CF_NIX_CACHE_API_SECRET` | Secrets Store secret | conditional | `<key-name>:<base64>`, as emitted by `nix key generate-secret`. Required unless every uploader sends signed narinfo. A plain secret or var also works, e.g. for `wrangler dev`. |
+| `CF_NIX_CACHE_API_SECRET` | Secrets Store secret | conditional | `<key-name>:<base64>`, as emitted by `nix key generate-secret`. Required unless every uploader sends signed narinfo. Only a Secrets Store binding is taken: bound as a plain secret or var, the Worker refuses to start, so the key never passes through Terraform or a command line. |
 | `CF_NIX_CACHE_API_OIDC_PROVIDERS` | var | for uploads | JSON array of the identity providers whose tokens may upload; see [Authentication](#authentication). Unset, uploads are off. |
 
 ## Authentication
@@ -92,7 +92,7 @@ does, and numbers and booleans compare as written (`"email_verified": "true"`).
 > for GitLab, `terraform_organization_id` for Terraform Cloud), or any project on
 > the issuer can upload. The Worker doesn't know which issuers these are: the
 > claim sets are the whole policy. Issuers that only give tokens to people who
-> passed your policy, like Cloudflare Access or a cf-oidc-auth broker, need no
+> passed your policy, like Cloudflare Access or a cf-oidc-exchange broker, need no
 > pin.
 
 The config is checked when an upload reads it. An invalid one fails closed:
@@ -118,40 +118,51 @@ Nix reads the netrc again for every request, so for a longer one, rewrite the
 file with a fresh token while `nix copy` runs. Keep the file readable only by
 you (`chmod 600`).
 
-### People: your GitHub token, through cf-oidc-auth
+### People: through cf-oidc-exchange
 
-The cache never takes a GitHub user token itself: it isn't signed, so only
-GitHub could vouch for it. A [cf-oidc-auth](https://github.com/cf-contrib/cf-oidc-auth)
-broker can, and exchanges it for a token of its own for the cache. Trust the
-broker as one more provider, pinned to the profile that issues for the cache:
+The cache takes OIDC tokens only, so a person needs one from an identity
+provider, such as a [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/validating-json/)
+application. A [cf-oidc-exchange](https://github.com/cf-contrib/cf-oidc-exchange)
+broker exchanges it for a short-lived token of its own for the cache. Trust the
+broker as one more provider, for its access tokens only, pinned to the profile
+that issues for the cache:
 
 ```json
 {
-  "issuer": "https://cf-oidc-broker.example.com",
+  "issuer": "https://cf-oidc-exchange.example.com",
   "audience": "https://cache.example.com",
-  "claims": [{ "profile": "nix-push-people" }]
+  "typ": "at+jwt",
+  "claims": [{ "profile": "nix-push" }]
 }
 ```
 
-The broker's profile decides who may upload, for example anyone with `write`
-on a repo (see its [Tokens for other services](https://github.com/cf-contrib/cf-oidc-auth/tree/main/packages/cf-oidc-broker#tokens-for-other-services)).
-A person then exchanges `gh auth token` once and uploads. The broker's token
-lasts as long as the profile's `max_ttl` (1 hour unless it sets more), so there's
-nothing to refresh; run it again once it has expired.
+The broker's profile decides who may upload, by the claims of the person's own
+token, `email` from Cloudflare Access say (see the broker's
+[People](https://github.com/cf-contrib/cf-oidc-exchange/tree/main/crates/cf-oidc-exchange-api#people)
+and [Tokens for other services](https://github.com/cf-contrib/cf-oidc-exchange/tree/main/crates/cf-oidc-exchange-api#tokens-for-other-services)).
+A person signs in once, then exchanges a token and uploads. The broker's token
+lasts the profile's `ttl`, never past the person's own; run it again once it
+has expired. No token goes on a command line, where the process list would
+show it: curl reads the subject token from stdin.
 
 ```sh
-token=$(curl -fsS https://cf-oidc-broker.example.com/oauth/token \
+cloudflared access login https://cf-oidc-exchange.example.com   # once
+subject=$(cloudflared access token -app=https://cf-oidc-exchange.example.com)
+token=$(printf %s "$subject" | curl -fsS https://cf-oidc-exchange.example.com/oauth/token \
   -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
-  -d subject_token="$(gh auth token)" \
-  -d subject_token_type=urn:ietf:params:oauth:token-type:access_token \
+  --data-urlencode subject_token@- \
+  -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
   -d audience=https://cache.example.com \
-  -d repository=example-org/nix-cache-access \
-  -d profile=nix-push-people | jq -er .access_token)
+  -d profile=nix-push | jq -er .access_token)
 (umask 077 && printf 'machine cache.example.com\n  login oidc\n  password %s\n' "$token" > ~/.netrc-nix-cache)
 nix copy --to 'https://cache.example.com?compression=none' --option netrc-file ~/.netrc-nix-cache ./result
 ```
 
-The cache only ever sees the broker's short-lived token, never the GitHub one.
+The cache only ever sees the broker's short-lived token, never the person's.
+To skip the broker, list the identity provider itself as a provider instead:
+for Cloudflare Access, its team domain as the `issuer`, the application's AUD
+tag as the `audience`, its keys' URL as the `jwks_uri`, and claim sets on
+`email`.
 
 ## HTTP API
 
@@ -173,7 +184,7 @@ must use the content type Nix sends: `text/x-nix-narinfo` for narinfo and
 | `PUT` | `/nar/<hash>.nar` | token | Upload a NAR archive. |
 | `GET` | `/health/live`, `/health/ready` | public | `200` while the Worker is up and serving, and `500`, like every request, while its bucket is unbound or its provider list invalid. The SDK's `HealthHandler`; a deployment check, so not in the OpenAPI document. |
 
-**Errors** are JSON, in the shape cf-oidc-auth uses: `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of a failed upload, so the message says what to fix, except for `500` and `502`, whose details go only to the logs.
+**Errors** are JSON: `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of a failed upload, so the message says what to fix, except for `500` and `502`, whose details go only to the logs.
 
 | Status | `error` | Means |
 |---|---|---|
@@ -239,13 +250,32 @@ nix develop -c worker-build --dev   # build the bundle into ./build (this direct
 nix develop -c wrangler dev         # serve locally (this directory)
 ```
 
-The integration tests call `wrangler dev` through the SDK's client. They run
-their own OIDC issuer on `127.0.0.1:8788`, the one `wrangler.toml` trusts, and
-upload with tokens it signs, so they need no credentials:
+To sign uploads locally, put a signing key in the local Secrets Store that
+`wrangler.toml` binds; Wrangler prompts for the value, so it stays off the
+command line. Without one, only narinfo the uploader signed can be stored.
 
 ```bash
-nix develop -c wrangler dev                                  # in one shell, this directory
-nix develop -c cargo test --features integration             # in another
+nix key generate-secret --key-name local-dev   # a throwaway key: copy the line it prints
+nix develop -c wrangler secrets-store secret create 00000000000000000000000000000000 --name signing-key --scopes workers   # paste it when prompted
+```
+
+The integration tests call the Worker under `wrangler dev` through the SDK's
+client. They run their own OIDC issuer on `127.0.0.1:8788`, the one
+`wrangler.toml` trusts, and upload with tokens it signs, so they need no
+credentials. `tests/run.sh` starts a `wrangler dev` of their own, on port 8789
+with its own local storage and a throwaway signing key, runs them, and stops
+it, so one you're running is left alone. CI runs it too:
+
+```bash
+nix develop -c tests/run.sh                                  # this directory
+```
+
+To run them against a `wrangler dev` you've started instead, set
+`CF_NIX_CACHE_API_URL` if it isn't on `http://127.0.0.1:8787`, and its
+`CF_NIX_CACHE_API_OIDC_PROVIDERS` audience to match:
+
+```bash
+nix develop -c cargo test --features integration
 ```
 
 ## Dependencies

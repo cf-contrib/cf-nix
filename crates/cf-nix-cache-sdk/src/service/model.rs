@@ -12,14 +12,41 @@ use ed25519_dalek::{Signature, Signer, SigningKey as DalekSigningKey};
 use crate::v1::{Error, ErrorCode};
 
 impl Error {
-    /// An error in the shape shared with cf-oidc-auth:
-    /// `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of
+    /// An error: `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of
     /// a failed upload, so the message says what to fix.
     pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
             error: code,
             message: message.into(),
         }
+    }
+}
+
+#[cfg(feature = "server")]
+impl ErrorCode {
+    /// The status an error with this code is answered with, as the spec's
+    /// responses have it.
+    pub fn status(&self) -> axum::http::StatusCode {
+        use axum::http::StatusCode;
+        match self {
+            ErrorCode::BadRequest => StatusCode::BAD_REQUEST,
+            ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
+            ErrorCode::Forbidden => StatusCode::FORBIDDEN,
+            ErrorCode::NotFound => StatusCode::NOT_FOUND,
+            ErrorCode::Misconfigured | ErrorCode::InternalError => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+            ErrorCode::UpstreamError => StatusCode::BAD_GATEWAY,
+        }
+    }
+}
+
+/// The error as a response outside the generated routes, such as from a
+/// layer over them: its code's status, and the JSON every error has.
+#[cfg(feature = "server")]
+impl axum::response::IntoResponse for Error {
+    fn into_response(self) -> axum::response::Response {
+        (self.error.status(), axum::Json(self)).into_response()
     }
 }
 

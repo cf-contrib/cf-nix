@@ -21,6 +21,10 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@v23
       - name: Run Tests
         run: nix develop --command cargo test
+      # The Worker under wrangler dev, on a port and storage of its own, against
+      # the tests' stand-in OIDC issuer.
+      - name: Run Integration Tests
+        run: nix develop --command crates/cf-nix-cache-api/tests/run.sh
       - name: Validate Terraform Module
         working-directory: deployment/terraform
         run: |

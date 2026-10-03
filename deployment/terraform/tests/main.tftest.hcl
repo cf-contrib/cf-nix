@@ -106,6 +106,11 @@ run "oidc_providers" {
         jwks_uri = "https://example.cloudflareaccess.com/cdn-cgi/access/certs"
         claims   = [{ email = "uploader@example.com" }]
       },
+      {
+        issuer = "https://cf-oidc-exchange.example.com"
+        typ    = "at+jwt"
+        claims = [{ profile = "nix-push" }]
+      },
     ]
   }
 
@@ -123,9 +128,15 @@ run "oidc_providers" {
           jwks_uri = "https://example.cloudflareaccess.com/cdn-cgi/access/certs"
           claims   = [{ email = "uploader@example.com" }]
         },
+        {
+          issuer   = "https://cf-oidc-exchange.example.com"
+          audience = "https://cf-nix-cache.example.workers.dev"
+          typ      = "at+jwt"
+          claims   = [{ profile = "nix-push" }]
+        },
       ]
     }
-    error_message = "the providers should be bound, the audience defaulting to the cache URL and an unset jwks_uri left out"
+    error_message = "the providers should be bound, the audience defaulting to the cache URL, and an unset jwks_uri or typ left out"
   }
 }
 
