@@ -1,7 +1,9 @@
-openapi: 3.1.0
+openapi: 3.0.0
 info:
   title: cf-nix-cache
-  description: |
+  license:
+    name: MIT
+  description: |-
     A Nix binary cache on Cloudflare Workers and R2. Reads are public. Uploads
     need an OIDC token from an issuer the Worker trusts, as the password of
     HTTP Basic credentials.
@@ -9,250 +11,305 @@ info:
     Errors are JSON, `{ error, message }`. A request that doesn't fit
     this document (a body over the size limit, the wrong content type) is
     rejected before it reaches the Worker, as `application/problem+json`.
-  version: 0.6.0 # x-release-please-version
-  license:
-    name: MIT
-
+  version: v1
 tags:
   - name: CacheService
     description: The Nix binary cache protocol.
-
 paths:
-  /nix-cache-info:
-    get:
-      operationId: getNixCacheInfo
-      tags: [CacheService]
-      summary: Cache metadata
-      description: The store directory, priority and mass-query support, in the format Nix reads.
-      responses:
-        "200":
-          description: The cache's metadata.
-          content:
-            text/x-nix-cache-info:
-              schema:
-                type: string
-
   /:
     post:
       operationId: postMassQuery
-      tags: [CacheService]
       summary: Mass query
-      description: |
+      description: |-
         Takes a newline-separated list of store path hashes and returns the
         ones that are in the cache, so a client can check many at once.
+      parameters: []
+      responses:
+        '200':
+          description: The cached subset of the hashes, one per line.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: |-
+            The auth config, the bindings or the signing key are invalid
+            (`misconfigured`), or a stored object is unreadable (`internal_error`).
+            Details go only to the logs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - CacheService
       requestBody:
         required: true
         content:
           text/plain:
             schema:
               type: string
-      responses:
-        "200":
-          description: The cached subset of the hashes, one per line.
-          content:
-            text/plain:
-              schema:
-                type: string
-        "500":
-          $ref: "#/components/responses/InternalServerError"
-
-  /{hash}.narinfo:
-    parameters:
-      - name: hash
-        in: path
-        required: true
-        description: The hash part of a store path.
-        schema:
-          type: string
-    head:
-      operationId: headNarInfo
-      tags: [CacheService]
-      summary: Check for a narinfo
-      description: Lets an uploader skip store paths the cache already has.
-      responses:
-        "200":
-          description: The narinfo exists.
-        "404":
-          description: No such narinfo.
-        "500":
-          description: The bucket couldn't be read.
-    get:
-      operationId: getNarInfo
-      tags: [CacheService]
-      summary: Get a narinfo
-      description: |
-        The narinfo for a store path, as it was uploaded, with a `Sig:` line if
-        the Worker signed it.
-      responses:
-        "200":
-          description: The narinfo.
-          content:
-            text/x-nix-narinfo:
-              schema:
-                type: string
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "500":
-          $ref: "#/components/responses/InternalServerError"
-    put:
-      operationId: putNarInfo
-      tags: [CacheService]
-      summary: Upload a narinfo
-      description: |
-        Parses and validates the narinfo, and requires its `StorePath` to match
-        the hash. It is stored as sent. If it has no `Sig:`, the Worker signs it
-        with `CF_NIX_CACHE_API_SECRET`, and rejects it when no key is set.
-      security:
-        - basic: []
-      requestBody:
-        required: true
-        content:
-          text/x-nix-narinfo:
-            schema:
-              type: string
-      responses:
-        "200":
-          description: The narinfo was stored.
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "500":
-          $ref: "#/components/responses/InternalServerError"
-        "502":
-          $ref: "#/components/responses/BadGateway"
-
   /nar/{hash}.nar:
-    parameters:
-      - name: hash
-        in: path
-        required: true
-        description: The NAR's file hash, from the narinfo's `URL`.
-        schema:
-          type: string
     head:
       operationId: headNar
-      tags: [CacheService]
       summary: Check for a NAR
       description: Lets an uploader skip NARs the cache already has.
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          description: The NAR's file hash, from the narinfo's `URL`.
+          schema:
+            type: string
       responses:
-        "200":
+        '200':
           description: The NAR exists.
-        "404":
+        '404':
           description: No such NAR.
-        "500":
+        '500':
           description: The bucket couldn't be read.
+      tags:
+        - CacheService
     get:
       operationId: getNar
-      tags: [CacheService]
       summary: Get a NAR
       description: The NAR archive a narinfo's `URL` points at.
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          description: The NAR's file hash, from the narinfo's `URL`.
+          schema:
+            type: string
       responses:
-        "200":
+        '200':
           description: The NAR.
           content:
             application/x-nix-archive:
               schema:
                 type: string
                 format: binary
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "500":
-          $ref: "#/components/responses/InternalServerError"
+        '404':
+          description: No such object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: |-
+            The auth config, the bindings or the signing key are invalid
+            (`misconfigured`), or a stored object is unreadable (`internal_error`).
+            Details go only to the logs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - CacheService
     put:
       operationId: putNar
-      tags: [CacheService]
       summary: Upload a NAR
-      description: |
+      description: |-
         Stores a NAR archive. Compressed NARs aren't supported: upload with
         `?compression=none`.
-      security:
-        - basic: []
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          description: The NAR's file hash, from the narinfo's `URL`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The NAR was stored.
+        '401':
+          description: |-
+            Missing or invalid credentials: no token, a token from an issuer the
+            Worker doesn't trust, or one for another audience or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: A valid token that no claim set for its issuer allows.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: |-
+            The auth config, the bindings or the signing key are invalid
+            (`misconfigured`), or a stored object is unreadable (`internal_error`).
+            Details go only to the logs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: The token's issuer, its discovery document or its keys, couldn't be reached.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - CacheService
       requestBody:
         required: true
         content:
-          # What Nix sends; it's served back as application/x-nix-archive.
           application/x-nix-nar:
             schema:
               type: string
               format: binary
+      security:
+        - basic: []
+  /nix-cache-info:
+    get:
+      operationId: getNixCacheInfo
+      summary: Cache metadata
+      description: The store directory, priority and mass-query support, in the format Nix reads.
+      parameters: []
       responses:
-        "200":
-          description: The NAR was stored.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "500":
-          $ref: "#/components/responses/InternalServerError"
-        "502":
-          $ref: "#/components/responses/BadGateway"
-
+        '200':
+          description: The cache's metadata.
+          content:
+            text/x-nix-cache-info:
+              schema:
+                type: string
+      tags:
+        - CacheService
+  /{hash}.narinfo:
+    head:
+      operationId: headNarInfo
+      summary: Check for a narinfo
+      description: Lets an uploader skip store paths the cache already has.
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          description: The hash part of a store path.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The narinfo exists.
+        '404':
+          description: No such narinfo.
+        '500':
+          description: The bucket couldn't be read.
+      tags:
+        - CacheService
+    get:
+      operationId: getNarInfo
+      summary: Get a narinfo
+      description: |-
+        The narinfo for a store path, as it was uploaded, with a `Sig:` line if
+        the Worker signed it.
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          description: The hash part of a store path.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The narinfo.
+          content:
+            text/x-nix-narinfo:
+              schema:
+                type: string
+        '404':
+          description: No such object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: |-
+            The auth config, the bindings or the signing key are invalid
+            (`misconfigured`), or a stored object is unreadable (`internal_error`).
+            Details go only to the logs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - CacheService
+    put:
+      operationId: putNarInfo
+      summary: Upload a narinfo
+      description: |-
+        Parses and validates the narinfo, and requires its `StorePath` to match
+        the hash. It is stored as sent. If it has no `Sig:`, the Worker signs it
+        with `CF_NIX_CACHE_API_SECRET`, and rejects it when no key is set.
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          description: The hash part of a store path.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The narinfo was stored.
+        '400':
+          description: The narinfo or request is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: |-
+            Missing or invalid credentials: no token, a token from an issuer the
+            Worker doesn't trust, or one for another audience or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: A valid token that no claim set for its issuer allows.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: |-
+            The auth config, the bindings or the signing key are invalid
+            (`misconfigured`), or a stored object is unreadable (`internal_error`).
+            Details go only to the logs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: The token's issuer, its discovery document or its keys, couldn't be reached.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - CacheService
+      requestBody:
+        required: true
+        content:
+          text/x-nix-narinfo:
+            schema:
+              type: string
+      security:
+        - basic: []
 components:
-  securitySchemes:
-    basic:
-      type: http
-      scheme: basic
-      description: |
-        An OIDC token from an issuer the Worker trusts, as the password. The
-        username isn't read.
-
-  responses:
-    BadRequest:
-      description: The narinfo or request is invalid.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-    Unauthorized:
-      description: |
-        Missing or invalid credentials: no token, a token from an issuer the
-        Worker doesn't trust, or one for another audience or expired.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-    Forbidden:
-      description: A valid token that no claim set for its issuer allows.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-    NotFound:
-      description: No such object.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-    InternalServerError:
-      description: |
-        The auth config, the bindings or the signing key are invalid
-        (`misconfigured`), or a stored object is unreadable (`internal_error`).
-        Details go only to the logs.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-    BadGateway:
-      description: The token's issuer, its discovery document or its keys, couldn't be reached.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-
   schemas:
     Error:
       type: object
-      description: An error, `{ error, message }`.
-      required: [error, message]
+      required:
+        - error
+        - message
       properties:
         error:
-          $ref: "#/components/schemas/ErrorCode"
+          $ref: '#/components/schemas/ErrorCode'
         message:
           type: string
           description: What went wrong. Nix prints it when an upload fails.
+      description: An error, `{ error, message }`.
     ErrorCode:
       type: string
       enum:
@@ -263,3 +320,10 @@ components:
         - misconfigured
         - internal_error
         - upstream_error
+  securitySchemes:
+    basic:
+      type: http
+      scheme: Basic
+      description: |-
+        An OIDC token from an issuer the Worker trusts, as the password. The
+        username isn't read.

@@ -19,6 +19,14 @@ jobs:
         uses: actions/checkout@v7
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v23
+      # The OpenAPI document is compiled from TypeSpec and checked in, so it
+      # must be what the .tsp compiles to.
+      - name: Check OpenAPI Document
+        working-directory: crates/cf-nix-cache-sdk/openapi
+        run: |
+          nix develop --command npm ci
+          nix develop --command npm run generate
+          git diff --exit-code .
       - name: Run Tests
         run: nix develop --command cargo test
       # The Worker under wrangler dev, on a port and storage of its own, against

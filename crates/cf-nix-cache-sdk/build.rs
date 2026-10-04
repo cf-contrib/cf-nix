@@ -3,7 +3,8 @@
 //!
 //! The crate's features pick what is generated: the model types always, the
 //! axum server with `server`, the reqwest client with `client`. Nothing
-//! generated is checked in, so the spec is the only thing to edit.
+//! generated is checked in. The spec is compiled from `cachev1.tsp` beside it,
+//! which is the only thing to edit.
 
 use std::{env, error::Error, fs, path::PathBuf};
 
