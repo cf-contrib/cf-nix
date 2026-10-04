@@ -1,0 +1,11 @@
+emit:
+  - "@typespec/openapi3"
+options:
+  "@typespec/openapi3":
+    emitter-output-dir: "{project-root}/nix/cache/{version}"
+    output-file: cache{version}.yaml
+    # Not 3.1: its NAR bodies would be `contentMediaType`, and openapi-to-rust
+    # only takes a body as bytes when its schema is `format: binary`.
+    openapi-versions:
+      - 3.0.0
+    omit-unreachable-types: true

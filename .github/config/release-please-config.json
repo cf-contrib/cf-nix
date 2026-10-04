@@ -12,7 +12,6 @@
         "README.md",
         "deployment/terraform/README.md",
         "deployment/terraform/variables.tf",
-        "crates/cf-nix-cache-sdk/openapi/nix/cache/v1/cachev1.yaml",
         {
           "type": "toml",
           "path": "crates/cf-nix-cache-api/Cargo.toml",

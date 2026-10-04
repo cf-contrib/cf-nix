@@ -25,12 +25,14 @@
 //!
 //! # Generated code
 //!
-//! `openapi/nix/cache/v1/cachev1.yaml` is the source. `build.rs` runs
-//! [openapi-to-rust](https://github.com/gpu-cli/openapi-to-rust) over it into
-//! `OUT_DIR`, so none of it is checked in or edited by hand. What is
-//! hand-written is in `service/`, mounted into `v1` beside it: the narinfo
-//! format and the models' constructors in `service/model.rs`, the health
-//! endpoints in `service/handler.rs`.
+//! `openapi/nix/cache/v1/cachev1.tsp` is the source, in
+//! [TypeSpec](https://typespec.io), and compiles to the OpenAPI document
+//! `cachev1.yaml` beside it. `build.rs` runs
+//! [openapi-to-rust](https://github.com/gpu-cli/openapi-to-rust) over the
+//! document into `OUT_DIR`, so none of the Rust is checked in or edited by
+//! hand. What is hand-written is in `service/`, mounted into `v1` beside it:
+//! the narinfo format and the models' constructors in `service/model.rs`, the
+//! health endpoints in `service/handler.rs`.
 
 mod service;
 
