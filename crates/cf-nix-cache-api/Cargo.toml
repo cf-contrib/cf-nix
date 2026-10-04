@@ -42,7 +42,7 @@ tokio = { version = "1.52.3", features = ["macros", "net", "rt-multi-thread", "s
 # A stand-in OIDC issuer for the integration tests: it serves discovery and a
 # JWKS over axum, and signs RS256 tokens with a key made from a fixed seed.
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
-rand_chacha = "0.3"
+rand_chacha = "0.10"
 rsa = { version = "0.9", features = ["sha2"] }
 # Encodes the stand-in issuer's tokens and keys.
 base64 = "0.23.0"
