@@ -275,7 +275,7 @@ dependencies = [
 [[package]]
 name = "cf-oidc-core"
 version = "0.8.0"
-source = "git+https://github.com/cf-contrib/cf-oidc-exchange?tag=v0.10.0#fdcc19d17b308da0d0b60a89104dd158fea15e14"
+source = "git+https://github.com/cf-contrib/cf-oidc-exchange?tag=v0.11.0#bc17e19e3d2150019ff735def7a4db431dd03ab0"
 dependencies = [
  "base64 0.23.1",
  "serde",
@@ -1985,7 +1985,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2299,7 +2299,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2850,7 +2850,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
