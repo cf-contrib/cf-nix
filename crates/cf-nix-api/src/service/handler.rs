@@ -46,11 +46,26 @@ impl CacheServiceHandler {
 #[async_trait::async_trait]
 impl CacheServiceApi for CacheServiceHandler {
     /// `GET /nix-cache-info`: the store directory, priority and mass-query
-    /// support, in the format Nix reads.
+    /// support, in the format Nix reads, and a `PublicKey:` line with
+    /// `CF_NIX_API_SECRET`'s public half when one is set. Nix ignores that
+    /// line: clients add the key to `trusted-public-keys` themselves.
     async fn get_nix_cache_info(&self) -> v1::GetNixCacheInfoResponse {
-        v1::GetNixCacheInfoResponse::Ok(
-            "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 40\n".to_string(),
-        )
+        SendFuture::new(async move {
+            let mut data = "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 40\n".to_string();
+            // Nix reads this before every substitution, so a key that can't
+            // be read leaves the line out rather than failing the cache.
+            let public_key = match self.config.signing_key().await {
+                Ok(Some(secret)) => NarInfoSigKey::parse(&secret).and_then(|key| key.public_key()),
+                Ok(None) => return v1::GetNixCacheInfoResponse::Ok(data),
+                Err(err) => Err(err.to_string()),
+            };
+            match public_key {
+                Ok(public_key) => writeln!(data, "PublicKey: {public_key}").unwrap(),
+                Err(err) => console_error!("reading {SECRET_KEY}'s public key failed: {err}"),
+            }
+            v1::GetNixCacheInfoResponse::Ok(data)
+        })
+        .await
     }
 
     /// `POST /`: takes a newline-separated list of store path hashes and

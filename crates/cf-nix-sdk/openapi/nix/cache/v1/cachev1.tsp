@@ -115,7 +115,9 @@ alias UploadErrors =
 @tag("CacheService")
 interface CacheService {
   /**
-   * The store directory, priority and mass-query support, in the format Nix reads.
+   * The store directory, priority and mass-query support, in the format Nix reads,
+   * and a `PublicKey:` line with the cache's signing key, `<key-name>:<base64>`,
+   * when it has one. Nix ignores that line: add the key to `trusted-public-keys`.
    *
    * @returns The cache's metadata.
    */

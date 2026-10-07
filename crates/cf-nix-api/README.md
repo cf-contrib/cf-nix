@@ -15,7 +15,7 @@ audience, and matching one of that issuer's claim sets.
    nix key generate-secret --key-name cache.example.com-1
    wrangler secrets-store secret create <store-id> --name cf-nix-signing-key --scopes workers --remote
    ```
-   Clients need the matching public key in `trusted-public-keys` (`nix key convert-secret-to-public`).
+   Clients need the matching public key in `trusted-public-keys` (`nix key convert-secret-to-public`, or the `PublicKey:` line of `<cache-url>/nix-cache-info`).
 2. **Decide who may upload**: a [provider list](#authentication). For GitHub Actions, look up numeric IDs to pin. Pin IDs, not names, because a deleted repo or org name can be re-registered by someone else:
    ```sh
    gh api orgs/<org> --jq .id           # repository_owner_id
@@ -174,7 +174,7 @@ must use the content type Nix sends: `text/x-nix-narinfo` for narinfo and
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `GET` | `/nix-cache-info` | public | Cache metadata (priority, etc.). |
+| `GET` | `/nix-cache-info` | public | Cache metadata (priority, etc.), and the signing key's public half as `PublicKey: <key-name>:<base64>` when `CF_NIX_API_SECRET` is set. Nix ignores that line: it's there to copy into `trusted-public-keys`. |
 | `GET` | `/<hash>.narinfo` | public | Narinfo for a store path. |
 | `HEAD` | `/<hash>.narinfo` | public | Existence check for a narinfo (200 / 404). |
 | `PUT` | `/<hash>.narinfo` | token | Upload a narinfo. |
