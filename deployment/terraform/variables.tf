@@ -74,7 +74,7 @@ variable "oidc_providers" {
 variable "release_tag" {
   type        = string
   description = "cf-nix release to deploy, e.g. v1.2.3, or \"latest\". Defaults to the release this module comes from."
-  default     = "v0.7.0" # x-release-please-version
+  default     = "v0.8.0" # x-release-please-version
 }
 
 variable "bundle_dir" {

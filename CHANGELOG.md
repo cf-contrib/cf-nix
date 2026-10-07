@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/cf-contrib/cf-nix/compare/v0.7.0...v0.8.0) (2026-10-07)
+
+
+### Features
+
+* list the signing key's public half in nix-cache-info ([#104](https://github.com/cf-contrib/cf-nix/issues/104)) ([672a21c](https://github.com/cf-contrib/cf-nix/commit/672a21c6cb3f115648515583f2b32a8a2cd35f96))
+
 ## [0.7.0](https://github.com/cf-contrib/cf-nix/compare/v0.6.0...v0.7.0) (2026-10-07)
 
 
