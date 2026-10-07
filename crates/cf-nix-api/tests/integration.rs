@@ -27,10 +27,20 @@ async fn test_get_nix_cache_info() {
         .get_nix_cache_info()
         .await
         .expect("the request failed");
+    // run.sh makes a new cf-nix-test key each run, so only its shape is
+    // known: an Ed25519 public key is 32 bytes, 44 characters of base64.
+    let (metadata, public_key) = info
+        .split_once("PublicKey: cf-nix-test:")
+        .expect("the signing key's public half is listed");
     assert_eq!(
-        info,
+        metadata,
         "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 40\n"
     );
+    let public_key = public_key
+        .strip_suffix('\n')
+        .expect("the line ends with a newline");
+    assert_eq!(public_key.len(), 44, "{public_key}");
+    assert!(public_key.ends_with('='), "{public_key}");
 }
 
 #[tokio::test]

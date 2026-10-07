@@ -204,6 +204,25 @@ impl NarInfoSigKey {
 
         Ok(format!("{}:{sig_b64}", self.key_name))
     }
+
+    /// The public key, `<key-name>:<base64>`, as `nix key
+    /// convert-secret-to-public` prints it and `trusted-public-keys` takes it.
+    pub fn public_key(&self) -> Result<String, String> {
+        let secret_bytes = STANDARD
+            .decode(&self.secret_key_b64)
+            .map_err(|_| "signing key must be valid base64".to_string())?;
+
+        let secret_bytes: [u8; 64] = secret_bytes
+            .try_into()
+            .map_err(|_| "signing key must decode to 64 bytes".to_string())?;
+
+        let signing_key = DalekSigningKey::from_keypair_bytes(&secret_bytes)
+            .map_err(|_| "invalid Ed25519 signing key".to_string())?;
+
+        let public_b64 = STANDARD.encode(signing_key.verifying_key().to_bytes());
+
+        Ok(format!("{}:{public_b64}", self.key_name))
+    }
 }
 
 /// Context for validating a narinfo upload.
@@ -676,6 +695,18 @@ CA: fixed:r:sha256:1yk2kns0dq14y0gny9hkg9vnzw02bgqxpqxhbaqgi1i8p7yj78rq
         let (key_name, sig) = sig.split_once(':').expect("Sig is <key-name>:<base64>");
         assert_eq!(key_name, "test-1");
         verify(&info, &public_key, sig);
+    }
+
+    #[test]
+    #[cfg(feature = "signing")]
+    fn public_key_is_the_secret_keys_public_half() {
+        let (secret, public_key) = made_up_key();
+        let key = NarInfoSigKey::parse(&secret).expect("key should parse");
+
+        assert_eq!(
+            key.public_key().expect("should derive"),
+            format!("test-1:{}", STANDARD.encode(public_key.to_bytes()))
+        );
     }
 
     #[test]
