@@ -1,6 +1,6 @@
 openapi: 3.0.0
 info:
-  title: cf-nix-cache
+  title: cf-nix
   license:
     name: MIT
   description: |-
@@ -240,7 +240,7 @@ paths:
       description: |-
         Parses and validates the narinfo, and requires its `StorePath` to match
         the hash. It is stored as sent. If it has no `Sig:`, the Worker signs it
-        with `CF_NIX_CACHE_API_SECRET`, and rejects it when no key is set.
+        with `CF_NIX_API_SECRET`, and rejects it when no key is set.
       parameters:
         - name: hash
           in: path

@@ -2,7 +2,7 @@
 
 mod helper;
 
-use cf_nix_cache_sdk::v1::{
+use cf_nix_sdk::v1::{
     ApiOpError, Error, ErrorCode, GetNarApiError, GetNarInfoApiError, HealthClient,
     PutNarInfoApiError,
 };

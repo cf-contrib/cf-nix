@@ -1,5 +1,5 @@
 [package]
-name = "cf-nix-cache-api"
+name = "cf-nix-api"
 version = "0.6.0"
 edition = "2021"
 authors = ["iamralch"]
@@ -14,7 +14,7 @@ worker = { version = "0.8", features = ["http", "axum"] }
 worker-macros = { version = "0.8" }
 
 # The API: its types, and the traits and router the Worker implements.
-cf-nix-cache-sdk = { path = "../cf-nix-cache-sdk", features = ["server", "signing"] }
+cf-nix-sdk = { path = "../cf-nix-sdk", features = ["server", "signing"] }
 # Named by the generated traits and router; the versions the SDK builds with.
 async-trait = "0.1"
 axum = { version = "0.8", default-features = false, features = ["json"] }
@@ -26,9 +26,9 @@ tower-layer = "0.3"
 tower-service = "0.3"
 
 # Verifies upload tokens: their providers, keys and claim sets, through
-# WebCrypto. From cf-oidc-exchange's release on GitHub: it isn't published
+# WebCrypto. From cf-sts's release on GitHub: it isn't published
 # to crates.io.
-cf-oidc-core = { git = "https://github.com/cf-contrib/cf-oidc-exchange", tag = "v0.11.0" }
+cf-sts-core = { git = "https://github.com/cf-contrib/cf-sts", tag = "v0.14.0" }
 
 # The provider list. Already in the tree via `worker`.
 serde = { version = "1", features = ["derive"] }
@@ -36,7 +36,7 @@ serde_json = "1"
 
 [dev-dependencies]
 # The integration tests call the Worker through the SDK's client.
-cf-nix-cache-sdk = { path = "../cf-nix-cache-sdk", features = ["client"] }
+cf-nix-sdk = { path = "../cf-nix-sdk", features = ["client"] }
 reqwest = "0.13.4"
 tokio = { version = "1.52.3", features = ["macros", "net", "rt-multi-thread", "sync"] }
 # A stand-in OIDC issuer for the integration tests: it serves discovery and a

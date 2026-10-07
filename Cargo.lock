@@ -227,15 +227,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "cf-nix-cache-api"
+name = "cf-nix-api"
 version = "0.6.0"
 dependencies = [
  "async-trait",
  "axum",
  "base64 0.23.1",
  "bytes",
- "cf-nix-cache-sdk",
- "cf-oidc-core",
+ "cf-nix-sdk",
+ "cf-sts-core",
  "http-auth-basic",
  "http-body-util",
  "rand_chacha",
@@ -251,7 +251,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cf-nix-cache-sdk"
+name = "cf-nix-sdk"
 version = "0.6.0"
 dependencies = [
  "async-trait",
@@ -273,9 +273,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "cf-oidc-core"
+name = "cf-sts-core"
 version = "0.8.0"
-source = "git+https://github.com/cf-contrib/cf-oidc-exchange?tag=v0.11.0#bc17e19e3d2150019ff735def7a4db431dd03ab0"
+source = "git+https://github.com/cf-contrib/cf-sts?tag=v0.14.0#c8b74716b893b7f4c8e7a63ff64d6def5a387b36"
 dependencies = [
  "base64 0.23.1",
  "serde",

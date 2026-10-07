@@ -34,7 +34,7 @@ updates:
       prefix: "chore"
       include: "scope"
   - package-ecosystem: "npm"
-    directory: "/crates/cf-nix-cache-sdk/openapi"
+    directory: "/crates/cf-nix-sdk/openapi"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10

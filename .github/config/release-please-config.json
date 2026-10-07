@@ -3,7 +3,7 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "package-name": "cf-nix-cache",
+      "package-name": "cf-nix",
       "include-v-in-tag": true,
       "include-v-in-release-name": true,
       "include-component-in-tag": false,
@@ -14,23 +14,23 @@
         "deployment/terraform/variables.tf",
         {
           "type": "toml",
-          "path": "crates/cf-nix-cache-api/Cargo.toml",
+          "path": "crates/cf-nix-api/Cargo.toml",
           "jsonpath": "$.package.version"
         },
         {
           "type": "toml",
           "path": "Cargo.lock",
-          "jsonpath": "$.package[?(@.name.value==='cf-nix-cache-api')].version"
+          "jsonpath": "$.package[?(@.name.value==='cf-nix-api')].version"
         },
         {
           "type": "toml",
-          "path": "crates/cf-nix-cache-sdk/Cargo.toml",
+          "path": "crates/cf-nix-sdk/Cargo.toml",
           "jsonpath": "$.package.version"
         },
         {
           "type": "toml",
           "path": "Cargo.lock",
-          "jsonpath": "$.package[?(@.name.value==='cf-nix-cache-sdk')].version"
+          "jsonpath": "$.package[?(@.name.value==='cf-nix-sdk')].version"
         }
       ]
     }
