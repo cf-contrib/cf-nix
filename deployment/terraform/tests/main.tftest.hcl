@@ -19,7 +19,7 @@ override_data {
         node_id              = "RA_test"
         size                 = 1
         updated_at           = "2026-10-01T00:00:00Z"
-        url                  = "https://api.github.com/repos/cf-contrib/cf-nix-cache/releases/assets/1"
+        url                  = "https://api.github.com/repos/cf-contrib/cf-nix/releases/assets/1"
       }
     ]
   }
@@ -37,7 +37,7 @@ override_data {
 
 variables {
   account_id  = "0123456789abcdef0123456789abcdef"
-  hostname    = "cf-nix-cache.example.workers.dev"
+  hostname    = "cf-nix.example.workers.dev"
   bucket_name = "nix-cache"
 }
 
@@ -45,7 +45,7 @@ run "defaults" {
   command = plan
 
   assert {
-    condition     = [for b in cloudflare_worker_version.this.bindings : b.name] == ["CF_NIX_CACHE_API_BUCKET"]
+    condition     = [for b in cloudflare_worker_version.this.bindings : b.name] == ["CF_NIX_API_BUCKET"]
     error_message = "without auth or a signing key, only the bucket should be bound"
   }
 
@@ -55,7 +55,7 @@ run "defaults" {
   }
 
   assert {
-    condition     = output.url == "https://cf-nix-cache.example.workers.dev"
+    condition     = output.url == "https://cf-nix.example.workers.dev"
     error_message = "url should be the workers.dev URL"
   }
 
@@ -74,13 +74,13 @@ run "signing_key_from_secrets_store" {
   command = plan
 
   variables {
-    signing_key_secret = { secret_store_id = "00000000000000000000000000000000", secret_name = "cf-nix-cache-signing-key" }
+    signing_key_secret = { secret_store_id = "00000000000000000000000000000000", secret_name = "cf-nix-signing-key" }
   }
 
   assert {
     condition = anytrue([
       for b in cloudflare_worker_version.this.bindings :
-      b.name == "CF_NIX_CACHE_API_SECRET" && b.type == "secrets_store_secret" && b.secret_name == "cf-nix-cache-signing-key"
+      b.name == "CF_NIX_API_SECRET" && b.type == "secrets_store_secret" && b.secret_name == "cf-nix-signing-key"
     ])
     error_message = "the signing key should be a Secrets Store binding"
   }
@@ -107,7 +107,7 @@ run "oidc_providers" {
         claims   = [{ email = "uploader@example.com" }]
       },
       {
-        issuer = "https://cf-oidc-exchange.example.com"
+        issuer = "https://cf-sts.example.com"
         typ    = "at+jwt"
         claims = [{ profile = "nix-push" }]
       },
@@ -116,10 +116,10 @@ run "oidc_providers" {
 
   assert {
     condition = { for b in cloudflare_worker_version.this.bindings : b.name => jsondecode(b.text) if b.type == "plain_text" } == {
-      CF_NIX_CACHE_API_OIDC_PROVIDERS = [
+      CF_NIX_API_OIDC_PROVIDERS = [
         {
           issuer   = "https://token.actions.githubusercontent.com"
-          audience = "https://cf-nix-cache.example.workers.dev"
+          audience = "https://cf-nix.example.workers.dev"
           claims   = [{ ref = "refs/heads/main", repository_owner_id = "100000001" }]
         },
         {
@@ -129,8 +129,8 @@ run "oidc_providers" {
           claims   = [{ email = "uploader@example.com" }]
         },
         {
-          issuer   = "https://cf-oidc-exchange.example.com"
-          audience = "https://cf-nix-cache.example.workers.dev"
+          issuer   = "https://cf-sts.example.com"
+          audience = "https://cf-nix.example.workers.dev"
           typ      = "at+jwt"
           claims   = [{ profile = "nix-push" }]
         },
@@ -144,7 +144,7 @@ run "uploads_off_without_providers" {
   command = plan
 
   assert {
-    condition     = length([for b in cloudflare_worker_version.this.bindings : b if b.name == "CF_NIX_CACHE_API_OIDC_PROVIDERS"]) == 0
+    condition     = length([for b in cloudflare_worker_version.this.bindings : b if b.name == "CF_NIX_API_OIDC_PROVIDERS"]) == 0
     error_message = "without providers, no auth binding should be created"
   }
 }

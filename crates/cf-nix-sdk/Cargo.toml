@@ -1,5 +1,5 @@
 [package]
-name = "cf-nix-cache-sdk"
+name = "cf-nix-sdk"
 version = "0.6.0"
 edition = "2024"
 authors = ["iamralch"]

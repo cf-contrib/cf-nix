@@ -1,4 +1,4 @@
-name = "cf-nix-cache"
+name = "cf-nix"
 main = "build/index.js"
 compatibility_date = "2026-05-14"
 
@@ -6,19 +6,19 @@ compatibility_date = "2026-05-14"
 command = "worker-build --dev"
 
 [[r2_buckets]]
-binding = "CF_NIX_CACHE_API_BUCKET"
+binding = "CF_NIX_API_BUCKET"
 bucket_name = "nix-bucket-dev"
 
 [vars]
 # Uploads in local dev take tokens from the integration tests' issuer, which
 # they serve on 127.0.0.1:8788 while they run.
-CF_NIX_CACHE_API_OIDC_PROVIDERS = '[{"issuer":"http://127.0.0.1:8788","audience":"http://127.0.0.1:8787","claims":[{"repository_owner_id":"100000001","ref":"refs/heads/main"}]}]'
+CF_NIX_API_OIDC_PROVIDERS = '[{"issuer":"http://127.0.0.1:8788","audience":"http://127.0.0.1:8787","claims":[{"repository_owner_id":"100000001","ref":"refs/heads/main"}]}]'
 
 # Secrets Store only: a plain `wrangler secret`, or a `--var`, is refused. For
 # local signing, create it in the local store; wrangler prompts for the value:
 #   wrangler secrets-store secret create 00000000000000000000000000000000 --name signing-key --scopes workers
 # Without it, only narinfo the uploader signed can be stored.
 [[secrets_store_secrets]]
-binding = "CF_NIX_CACHE_API_SECRET"
+binding = "CF_NIX_API_SECRET"
 store_id = "00000000000000000000000000000000"
 secret_name = "signing-key"

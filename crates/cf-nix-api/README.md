@@ -1,11 +1,11 @@
-# cf-nix-cache-api
+# cf-nix-api
 
-> The Worker half of [cf-nix-cache](../..): a Nix binary cache on Cloudflare
+> The Worker half of [cf-nix](../..): a Nix binary cache on Cloudflare
 > Workers and R2, written in Rust. It serves narinfo and NARs from R2, signs
 > uploads, and authorizes uploaders by an OIDC token from an issuer you trust.
 
 Reads are public. An upload needs an OIDC token as the password of HTTP Basic
-credentials, from a provider in `CF_NIX_CACHE_API_OIDC_PROVIDERS`, for the cache's
+credentials, from a provider in `CF_NIX_API_OIDC_PROVIDERS`, for the cache's
 audience, and matching one of that issuer's claim sets.
 
 ## Deploy
@@ -13,7 +13,7 @@ audience, and matching one of that issuer's claim sets.
 1. **Create the signing key** and store it in [Secrets Store](https://developers.cloudflare.com/secrets-store/), so it never passes through your deploy tooling. Wrangler prompts for the value: paste the whole `<key-name>:<base64>` line.
    ```sh
    nix key generate-secret --key-name cache.example.com-1
-   wrangler secrets-store secret create <store-id> --name cf-nix-cache-signing-key --scopes workers --remote
+   wrangler secrets-store secret create <store-id> --name cf-nix-signing-key --scopes workers --remote
    ```
    Clients need the matching public key in `trusted-public-keys` (`nix key convert-secret-to-public`).
 2. **Decide who may upload**: a [provider list](#authentication). For GitHub Actions, look up numeric IDs to pin. Pin IDs, not names, because a deleted repo or org name can be re-registered by someone else:
@@ -30,13 +30,13 @@ audience, and matching one of that issuer's claim sets.
 
 | Binding | Type | Required | Description |
 |---|---|---|---|
-| `CF_NIX_CACHE_API_BUCKET` | R2 bucket | yes | Stores `.narinfo` and `.nar` objects. |
-| `CF_NIX_CACHE_API_SECRET` | Secrets Store secret | conditional | `<key-name>:<base64>`, as emitted by `nix key generate-secret`. Required unless every uploader sends signed narinfo. Only a Secrets Store binding is taken: bound as a plain secret or var, the Worker refuses to start, so the key never passes through Terraform or a command line. |
-| `CF_NIX_CACHE_API_OIDC_PROVIDERS` | var | for uploads | JSON array of the identity providers whose tokens may upload; see [Authentication](#authentication). Unset, uploads are off. |
+| `CF_NIX_API_BUCKET` | R2 bucket | yes | Stores `.narinfo` and `.nar` objects. |
+| `CF_NIX_API_SECRET` | Secrets Store secret | conditional | `<key-name>:<base64>`, as emitted by `nix key generate-secret`. Required unless every uploader sends signed narinfo. Only a Secrets Store binding is taken: bound as a plain secret or var, the Worker refuses to start, so the key never passes through Terraform or a command line. |
+| `CF_NIX_API_OIDC_PROVIDERS` | var | for uploads | JSON array of the identity providers whose tokens may upload; see [Authentication](#authentication). Unset, uploads are off. |
 
 ## Authentication
 
-`CF_NIX_CACHE_API_OIDC_PROVIDERS` lists the identity providers whose tokens may
+`CF_NIX_API_OIDC_PROVIDERS` lists the identity providers whose tokens may
 upload: each one's issuer, the audience its tokens must be for, and who may
 upload:
 
@@ -92,7 +92,7 @@ does, and numbers and booleans compare as written (`"email_verified": "true"`).
 > for GitLab, `terraform_organization_id` for Terraform Cloud), or any project on
 > the issuer can upload. The Worker doesn't know which issuers these are: the
 > claim sets are the whole policy. Issuers that only give tokens to people who
-> passed your policy, like Cloudflare Access or a cf-oidc-exchange broker, need no
+> passed your policy, like Cloudflare Access or a cf-sts broker, need no
 > pin.
 
 The config is checked when an upload reads it. An invalid one fails closed:
@@ -118,18 +118,18 @@ Nix reads the netrc again for every request, so for a longer one, rewrite the
 file with a fresh token while `nix copy` runs. Keep the file readable only by
 you (`chmod 600`).
 
-### People: through cf-oidc-exchange
+### People: through cf-sts
 
 The cache takes OIDC tokens only, so a person needs one from an identity
 provider, such as a [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/validating-json/)
-application. A [cf-oidc-exchange](https://github.com/cf-contrib/cf-oidc-exchange)
+application. A [cf-sts](https://github.com/cf-contrib/cf-sts)
 broker exchanges it for a short-lived token of its own for the cache. Trust the
 broker as one more provider, for its access tokens only, pinned to the profile
 that issues for the cache:
 
 ```json
 {
-  "issuer": "https://cf-oidc-exchange.example.com",
+  "issuer": "https://cf-sts.example.com",
   "audience": "https://cache.example.com",
   "typ": "at+jwt",
   "claims": [{ "profile": "nix-push" }]
@@ -138,17 +138,17 @@ that issues for the cache:
 
 The broker's profile decides who may upload, by the claims of the person's own
 token, `email` from Cloudflare Access say (see the broker's
-[People](https://github.com/cf-contrib/cf-oidc-exchange/tree/main/crates/cf-oidc-exchange-api#people)
-and [Tokens for other services](https://github.com/cf-contrib/cf-oidc-exchange/tree/main/crates/cf-oidc-exchange-api#tokens-for-other-services)).
+[People](https://github.com/cf-contrib/cf-sts/tree/main/crates/cf-sts-api#people)
+and [Tokens for other services](https://github.com/cf-contrib/cf-sts/tree/main/crates/cf-sts-api#tokens-for-other-services)).
 A person signs in once, then exchanges a token and uploads. The broker's token
 lasts the profile's `ttl`, never past the person's own; run it again once it
 has expired. No token goes on a command line, where the process list would
 show it: curl reads the subject token from stdin.
 
 ```sh
-cloudflared access login https://cf-oidc-exchange.example.com   # once
-subject=$(cloudflared access token -app=https://cf-oidc-exchange.example.com)
-token=$(printf %s "$subject" | curl -fsS https://cf-oidc-exchange.example.com/oauth/token \
+cloudflared access login https://cf-sts.example.com   # once
+subject=$(cloudflared access token -app=https://cf-sts.example.com)
+token=$(printf %s "$subject" | curl -fsS https://cf-sts.example.com/oauth/token \
   -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
   --data-urlencode subject_token@- \
   -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
@@ -166,8 +166,8 @@ tag as the `audience`, its keys' URL as the `jwks_uri`, and claim sets on
 
 ## HTTP API
 
-The API is specified by the SDK's [OpenAPI document](../cf-nix-cache-sdk/openapi/nix/cache/v1/cachev1.yaml).
-The Worker implements the server [generated from it](../cf-nix-cache-sdk), so
+The API is specified by the SDK's [OpenAPI document](../cf-nix-sdk/openapi/nix/cache/v1/cachev1.yaml).
+The Worker implements the server [generated from it](../cf-nix-sdk), so
 requests are checked against the document before a handler sees them. Uploads
 must use the content type Nix sends: `text/x-nix-narinfo` for narinfo and
 `application/x-nix-nar` for NARs.
@@ -202,7 +202,7 @@ type, `413` for a body over 64 MiB, `400` or `422` for a malformed request.
 
 **Validation and signing:** the Worker parses each uploaded narinfo, checks its
 format, and requires its `StorePath` to match the request's hash. Every stored
-narinfo carries a `Sig:`. If the uploader didn't sign and `CF_NIX_CACHE_API_SECRET`
+narinfo carries a `Sig:`. If the uploader didn't sign and `CF_NIX_API_SECRET`
 is set, the Worker signs the upload itself. Otherwise the `PUT` returns `400`.
 
 ## Security
@@ -271,8 +271,8 @@ nix develop -c tests/run.sh                                  # this directory
 ```
 
 To run them against a `wrangler dev` you've started instead, set
-`CF_NIX_CACHE_API_URL` if it isn't on `http://127.0.0.1:8787`, and its
-`CF_NIX_CACHE_API_OIDC_PROVIDERS` audience to match:
+`CF_NIX_API_URL` if it isn't on `http://127.0.0.1:8787`, and its
+`CF_NIX_API_OIDC_PROVIDERS` audience to match:
 
 ```bash
 nix develop -c cargo test --features integration
@@ -280,7 +280,7 @@ nix develop -c cargo test --features integration
 
 ## Dependencies
 
-- [`cf-nix-cache-sdk`](../cf-nix-cache-sdk), the API's types, the server traits the Worker implements, and the narinfo format: parsing, validation and signing
+- [`cf-nix-sdk`](../cf-nix-sdk), the API's types, the server traits the Worker implements, and the narinfo format: parsing, validation and signing
 - [`worker`](https://crates.io/crates/worker) and [`worker-macros`](https://crates.io/crates/worker-macros), the Cloudflare Workers Rust SDK, with [`axum`](https://crates.io/crates/axum), which serves the SDK's router
 - [`http-auth-basic`](https://crates.io/crates/http-auth-basic) for the auth header
 - [`serde`](https://crates.io/crates/serde) and [`serde_json`](https://crates.io/crates/serde_json) for the provider list, token claims, discovery documents and key sets

@@ -22,7 +22,7 @@
 
 use std::{fmt::Write, sync::Arc};
 
-use cf_nix_cache_sdk::v1::{
+use cf_nix_sdk::v1::{
     self, CacheServiceApi, ErrorCode, NarInfo, NarInfoContext, NarInfoSigKey, Validate, append_sig,
 };
 use worker::{Error, console_error, send::SendFuture};
@@ -146,7 +146,7 @@ impl CacheServiceApi for CacheServiceHandler {
 
     /// `PUT /{hash}.narinfo`: stores a narinfo as sent, once it parses and
     /// validates and its `StorePath` matches `hash`. One without a `Sig:` is
-    /// signed with `CF_NIX_CACHE_API_SECRET`, and refused when no key is set.
+    /// signed with `CF_NIX_API_SECRET`, and refused when no key is set.
     async fn put_nar_info(&self, hash: String, body: String) -> v1::PutNarInfoResponse {
         SendFuture::new(async move {
             let bad_request =
@@ -161,7 +161,7 @@ impl CacheServiceApi for CacheServiceHandler {
             }
 
             // Stored narinfo must always carry a Sig:. If the uploader didn't
-            // provide one, sign with CF_NIX_CACHE_API_SECRET; if neither path
+            // provide one, sign with CF_NIX_API_SECRET; if neither path
             // produces a signature, reject. The text is stored as Nix sent it,
             // so no field is dropped or reordered.
             let signing_failure = || {

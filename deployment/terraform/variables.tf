@@ -62,7 +62,7 @@ variable "oidc_providers" {
     typ      = optional(string)
     claims   = list(map(string))
   }))
-  description = "OIDC identity providers whose tokens may upload. A token is accepted if any claim set of its provider matches. audience defaults to the cache URL; jwks_uri to what the issuer's metadata says; typ, the type its tokens must have, to any (set \"at+jwt\" for a cf-oidc-exchange broker, so only its access tokens upload). Empty turns uploads off."
+  description = "OIDC identity providers whose tokens may upload. A token is accepted if any claim set of its provider matches. audience defaults to the cache URL; jwks_uri to what the issuer's metadata says; typ, the type its tokens must have, to any (set \"at+jwt\" for a cf-sts broker, so only its access tokens upload). Empty turns uploads off."
   default     = []
 
   validation {
@@ -73,7 +73,7 @@ variable "oidc_providers" {
 
 variable "release_tag" {
   type        = string
-  description = "cf-nix-cache release to deploy, e.g. v1.2.3, or \"latest\". Defaults to the release this module comes from."
+  description = "cf-nix release to deploy, e.g. v1.2.3, or \"latest\". Defaults to the release this module comes from."
   default     = "v0.6.0" # x-release-please-version
 }
 
@@ -86,7 +86,7 @@ variable "bundle_dir" {
 variable "worker_name" {
   type        = string
   description = "Cloudflare Worker script name."
-  default     = "cf-nix-cache"
+  default     = "cf-nix"
 }
 
 variable "worker_compatibility_date" {

@@ -11,31 +11,31 @@
 //!
 //! The provider list's format is here too: [`ProviderConfig`], a
 //! [`Provider`] with the claim sets that let its tokens upload, and what
-//! parsing checks. Verifying a token against it is cf-oidc-core's, which the
+//! parsing checks. Verifying a token against it is cf-sts-core's, which the
 //! auth [`layer`](super::layer) calls.
 
-use cf_oidc_core::{ClaimRules, Provider, Providers};
+use cf_sts_core::{ClaimRules, Provider, Providers};
 use serde::Deserialize;
 use worker::{Bucket, Env, Error, SecretStore, js_sys, send::SendWrapper, wasm_bindgen::JsValue};
 
 /// The binding of the R2 bucket every narinfo and NAR is stored in.
-pub const BUCKET_KEY: &str = "CF_NIX_CACHE_API_BUCKET";
+pub const BUCKET_KEY: &str = "CF_NIX_API_BUCKET";
 
 /// The binding of the narinfo signing key, `<key-name>:<base64>`. Optional:
 /// without it, only narinfo the uploader signed can be stored.
-pub const SECRET_KEY: &str = "CF_NIX_CACHE_API_SECRET";
+pub const SECRET_KEY: &str = "CF_NIX_API_SECRET";
 
 /// The binding of the providers whose tokens may upload.
-pub const PROVIDERS_KEY: &str = "CF_NIX_CACHE_API_OIDC_PROVIDERS";
+pub const PROVIDERS_KEY: &str = "CF_NIX_API_OIDC_PROVIDERS";
 
 /// What the Worker is configured with, from its bindings.
 pub struct Config {
-    /// `CF_NIX_CACHE_API_BUCKET`.
+    /// `CF_NIX_API_BUCKET`.
     bucket: BucketConfig,
-    /// `CF_NIX_CACHE_API_SECRET`'s binding, not yet its value. None signs
+    /// `CF_NIX_API_SECRET`'s binding, not yet its value. None signs
     /// nothing.
     signing_key: Option<Secret>,
-    /// `CF_NIX_CACHE_API_OIDC_PROVIDERS`. None turns uploads off.
+    /// `CF_NIX_API_OIDC_PROVIDERS`. None turns uploads off.
     providers: Providers<ProviderConfig>,
 }
 
@@ -44,9 +44,9 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// When `CF_NIX_CACHE_API_BUCKET` isn't bound to an R2 bucket,
-    /// `CF_NIX_CACHE_API_SECRET` is bound but not from Secrets Store, or
-    /// `CF_NIX_CACHE_API_OIDC_PROVIDERS` isn't a valid provider list.
+    /// When `CF_NIX_API_BUCKET` isn't bound to an R2 bucket,
+    /// `CF_NIX_API_SECRET` is bound but not from Secrets Store, or
+    /// `CF_NIX_API_OIDC_PROVIDERS` isn't a valid provider list.
     pub fn from_env(env: &Env) -> worker::Result<Self> {
         Ok(Self {
             bucket: BucketConfig::from_env(env)?,
@@ -101,7 +101,7 @@ pub struct ProviderConfig {
     /// Where its keys are. `None` means its metadata says.
     #[serde(default)]
     jwks_uri: Option<String>,
-    /// The `typ` its tokens must have: `at+jwt` for a cf-oidc-exchange
+    /// The `typ` its tokens must have: `at+jwt` for a cf-sts
     /// broker's, so no other token it signs can upload. `None` takes any.
     #[serde(default)]
     typ: Option<String>,
@@ -129,14 +129,14 @@ impl Provider for ProviderConfig {
 }
 
 impl ProviderConfig {
-    /// The providers in `CF_NIX_CACHE_API_OIDC_PROVIDERS`: none if it's unset
+    /// The providers in `CF_NIX_API_OIDC_PROVIDERS`: none if it's unset
     /// or empty, which turns uploads off.
     fn from_env(env: &Env) -> worker::Result<Providers<Self>> {
         let value = env.var(PROVIDERS_KEY).ok().map(|value| value.to_string());
         Self::from_var(value.as_deref()).map_err(Error::RustError)
     }
 
-    /// The providers in `value`, `CF_NIX_CACHE_API_OIDC_PROVIDERS`'s value:
+    /// The providers in `value`, `CF_NIX_API_OIDC_PROVIDERS`'s value:
     /// none if it's unset or empty, which turns uploads off.
     ///
     /// # Errors
@@ -149,7 +149,7 @@ impl ProviderConfig {
         }
     }
 
-    /// The providers in `json`, checked: cf-oidc-core checks the providers,
+    /// The providers in `json`, checked: cf-sts-core checks the providers,
     /// and each one's claim sets, saying where anything's wrong.
     fn parse(json: &str) -> Result<Providers<Self>, String> {
         let providers: Providers<Self> = serde_json::from_str(json).map_err(|err| {
@@ -210,11 +210,11 @@ mod tests {
     use super::*;
 
     const ISSUER: &str = "https://token.actions.githubusercontent.com";
-    const BROKER: &str = "https://cf-oidc-exchange.example.com";
+    const BROKER: &str = "https://cf-sts.example.com";
     const CACHE: &str = "https://cache.example.com";
 
     /// A provider list: GitHub Actions, pinned to the test org, and a
-    /// cf-oidc-exchange broker, whose access tokens only.
+    /// cf-sts broker, whose access tokens only.
     fn providers() -> Value {
         json!([
             { "issuer": ISSUER, "audience": CACHE, "claims": [{ "repository_owner_id": "100000001" }] },
@@ -250,7 +250,7 @@ mod tests {
         let providers = parse(&providers());
         assert_eq!(providers.len(), 2);
         assert_eq!(providers[0].typ(), None);
-        assert_eq!(providers[1].typ(), Some(cf_oidc_core::AT_JWT));
+        assert_eq!(providers[1].typ(), Some(cf_sts_core::AT_JWT));
     }
 
     #[test]
