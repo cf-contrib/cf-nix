@@ -7,7 +7,7 @@
 
 ```hcl
 module "cf_nix" {
-  source = "git::https://github.com/cf-contrib/cf-nix.git//deployment/terraform?ref=v0.7.0" # x-release-please-version
+  source = "git::https://github.com/cf-contrib/cf-nix.git//deployment/terraform?ref=v0.8.0" # x-release-please-version
 
   account_id         = var.account_id
   hostname           = "cf-nix.example.workers.dev"
