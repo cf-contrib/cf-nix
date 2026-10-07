@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.0](https://github.com/cf-contrib/cf-nix/compare/v0.6.0...v0.7.0) (2026-10-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* nothing takes the old names. The Worker's bindings are CF_NIX_API_* (were CF_NIX_CACHE_API_*). The Terraform module's worker_name defaults to cf-nix (was cf-nix-cache), and it downloads releases from cf-contrib/cf-nix.
+
+### Code Refactoring
+
+* rename the project cf-nix ([#101](https://github.com/cf-contrib/cf-nix/issues/101)) ([ae45b08](https://github.com/cf-contrib/cf-nix/commit/ae45b0805172a822ccf4bf3736af224cb49c3978))
+
 ## [0.6.0](https://github.com/cf-contrib/cf-nix-cache/compare/v0.5.0...v0.6.0) (2026-10-02)
 
 
