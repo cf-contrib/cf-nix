@@ -6,36 +6,47 @@
 > build is needed.
 
 ```hcl
-module "cloudflare_nix" {
+module "cloudflare_nix_api" {
   source = "git::https://github.com/cf-contrib/cloudflare-nix.git//deployment/terraform?ref=v0.8.0" # x-release-please-version
 
-  account_id         = var.account_id
-  hostname           = "cloudflare-nix.example.workers.dev"
-  bucket_name        = "nix-cache"
-  signing_key_secret = { secret_store_id = var.secret_store_id, secret_name = "cloudflare-nix-signing-key" }
+  account_id  = var.account_id
+  hostname    = "cloudflare-nix.example.workers.dev"
+  bucket_name = "nix-cache"
+
+  signing_key_secret = {
+    secret_store_id = var.secret_store_id
+    secret_name     = "cloudflare-nix-signing-key"
+  }
 
   # Who may upload: OIDC tokens from these providers that match a claim set.
-  oidc_providers = [{
-    # GitHub Actions jobs in this org's repo, on main. The audience defaults
-    # to the cache URL. GitHub gives tokens to every repository on github.com,
-    # so pin your org in every claim set.
-    issuer = "https://token.actions.githubusercontent.com"
-    claims = [{
-      repository_owner_id = "100000001" # gh api orgs/<org> --jq .id
-      repository_id       = "200000002" # gh api repos/<org>/<repo> --jq .id
-      ref                 = "refs/heads/main"
-    }]
-  }, {
-    # People, through a cf-sts broker: its access tokens only, from
-    # the profile that issues them for this cache.
-    issuer = "https://cf-sts.example.com"
-    typ    = "at+jwt"
-    claims = [{ profile = "nix-push" }]
-  }]
+  oidc_providers = [
+    {
+      # GitHub Actions jobs in this org's repo, on main. The audience defaults
+      # to the cache URL. GitHub gives tokens to every repository on github.com,
+      # so pin your org in every claim set.
+      issuer = "https://token.actions.githubusercontent.com"
+      claims = [
+        {
+          repository_owner_id = "100000001" # gh api orgs/<org> --jq .id
+          repository_id       = "200000002" # gh api repos/<org>/<repo> --jq .id
+          ref                 = "refs/heads/main"
+        },
+      ]
+    },
+    {
+      # People, through a cf-sts broker: its access tokens only, from
+      # the profile that issues them for this cache.
+      issuer = "https://cf-sts.example.com"
+      typ    = "at+jwt"
+      claims = [
+        { profile = "nix-push" },
+      ]
+    },
+  ]
 }
 
-output "nix_cache_url" {
-  value = module.cloudflare_nix.url
+output "cloudflare_nix_api_url" {
+  value = module.cloudflare_nix_api.url
 }
 ```
 
@@ -65,7 +76,7 @@ wrangler secrets-store secret create <store-id> --name cloudflare-nix-signing-ke
 export CLOUDFLARE_API_TOKEN=...
 tofu init
 tofu apply
-curl -fsS "$(tofu output -raw nix_cache_url)/health/ready"   # 200 once the Worker is serving and configured
+curl -fsS "$(tofu output -raw cloudflare_nix_api_url)/health/ready"   # 200 once the Worker is serving and configured
 ```
 
 Terraform only references the secret by store ID and name. The key never
@@ -130,23 +141,23 @@ first `apply`:
 ```hcl
 moved {
   from = cloudflare_worker.nix_cache
-  to   = module.cloudflare_nix.cloudflare_worker.this
+  to   = module.cloudflare_nix_api.cloudflare_worker.this
 }
 moved {
   from = cloudflare_worker_version.nix_cache
-  to   = module.cloudflare_nix.cloudflare_worker_version.this
+  to   = module.cloudflare_nix_api.cloudflare_worker_version.this
 }
 moved {
   from = cloudflare_workers_deployment.nix_cache
-  to   = module.cloudflare_nix.cloudflare_workers_deployment.this
+  to   = module.cloudflare_nix_api.cloudflare_workers_deployment.this
 }
 moved {
   from = cloudflare_r2_bucket.nix
-  to   = module.cloudflare_nix.cloudflare_r2_bucket.this
+  to   = module.cloudflare_nix_api.cloudflare_r2_bucket.this
 }
 moved {
   from = cloudflare_r2_bucket_lifecycle.nix
-  to   = module.cloudflare_nix.cloudflare_r2_bucket_lifecycle.this[0]
+  to   = module.cloudflare_nix_api.cloudflare_r2_bucket_lifecycle.this[0]
 }
 ```
 
