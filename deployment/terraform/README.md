@@ -133,6 +133,7 @@ runners whose egress is allowlisted.
 | `worker_name` | Deployed Worker script name. |
 | `bucket_name` | R2 bucket backing the cache. |
 | `release_tag` | Release that was deployed, or `"local"` for `bundle_dir`. |
+| `worker_modules_sha256` | SHA-256 of each module the Worker version uploads, `index.js` and `index_bg.wasm`, of its base64 content. The plan shows the modules themselves only as `(sensitive value)`: this says which one changed. |
 
 ## Upgrading
 

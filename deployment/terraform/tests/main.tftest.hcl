@@ -227,4 +227,9 @@ run "local_bundle" {
     condition     = one([for m in cloudflare_worker_version.this.modules : m.content_base64 if m.name == "index_bg.wasm"]) == filebase64("tests/fixtures/bundle/index_bg.wasm")
     error_message = "the local wasm should be uploaded"
   }
+
+  assert {
+    condition     = output.worker_modules_sha256 == { "index.js" = sha256(filebase64("tests/fixtures/bundle/index.js")), "index_bg.wasm" = sha256(filebase64("tests/fixtures/bundle/index_bg.wasm")) }
+    error_message = "worker_modules_sha256 should hash each module's base64 content"
+  }
 }
