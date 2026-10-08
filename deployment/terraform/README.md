@@ -10,7 +10,7 @@ module "cloudflare_nix_api" {
   source = "git::https://github.com/cf-contrib/cloudflare-nix.git//deployment/terraform?ref=v0.8.0" # x-release-please-version
 
   account_id  = var.account_id
-  hostname    = "cloudflare-nix.example.workers.dev"
+  hostname    = "cloudflare-nix-api.example.workers.dev"
   bucket_name = "nix-cache"
 
   signing_key_secret = {
@@ -101,7 +101,7 @@ Then set up upload credentials as described in the Worker's
 | `oidc_providers` | no | `[]` | Identity providers whose tokens may upload: `{ issuer, audience?, jwks_uri?, typ?, claims }`. `audience` defaults to the cache URL; `typ` is the type the provider's tokens must have, `"at+jwt"` for a cf-sts broker; `claims` is a list of claim sets, any one of which must match. Empty turns uploads off. See the Worker's [Authentication](../../crates/cloudflare-nix-api/README.md#authentication). |
 | `release_tag` | no | this module's release | Release to deploy, e.g. `v1.2.3`, or `"latest"`. |
 | `bundle_dir` | no | `null` | A local `worker-build --release` output directory to deploy instead of a release. |
-| `worker_name` | no | `cloudflare-nix` | Cloudflare Worker script name. |
+| `worker_name` | no | `cloudflare-nix-api` | Cloudflare Worker script name. |
 | `worker_compatibility_date` | no | `2026-05-14` | Workers runtime compatibility date. |
 
 ## Outputs

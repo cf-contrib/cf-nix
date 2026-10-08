@@ -24,7 +24,7 @@ use cloudflare_nix_sdk::v1::*;
 ```rust
 use cloudflare_nix_sdk::v1::HttpClient;
 
-let client = HttpClient::new().with_base_url("https://cloudflare-nix.example.workers.dev");
+let client = HttpClient::new().with_base_url("https://cloudflare-nix-api.example.workers.dev");
 let info = client.get_nar_info("j5m1qd2dbsmhq0mw13yb8wijnm3pq4z0").await?;
 
 // Uploads take an OIDC token as the password of HTTP Basic credentials.

@@ -75,7 +75,7 @@ Also: this is a hobby project. I wanted an excuse to spend more time with Cloudf
 2. **Deploy the Worker** with the [Terraform module](deployment/terraform), on workers.dev (a custom domain is optional), then check that `<cache-url>/health/ready` returns `200`.
 3. **Point Nix at it** in `nix.conf`:
    ```ini
-   substituters = https://cloudflare-nix.example.workers.dev https://cache.nixos.org
+   substituters = https://cloudflare-nix-api.example.workers.dev https://cache.nixos.org
    trusted-public-keys = cache.example.com-1:<base64-public-key> cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
    ```
 4. **Upload** with `nix copy --to 'https://<cache>?compression=none' <paths>` (the cache stores uncompressed NARs), with the token in a netrc file: that's the only place Nix sends credentials from. In GitHub Actions:
@@ -88,7 +88,7 @@ Also: this is a hobby project. I wanted an excuse to spend more time with Cloudf
      - run: nix build .#app
      - name: Upload
        env:
-         NIX_CACHE_DOMAIN: cloudflare-nix.example.workers.dev
+         NIX_CACHE_DOMAIN: cloudflare-nix-api.example.workers.dev
        run: |
          github_token=$(curl -fsS \
            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \

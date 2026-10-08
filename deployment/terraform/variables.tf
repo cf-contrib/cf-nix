@@ -86,7 +86,7 @@ variable "bundle_dir" {
 variable "worker_name" {
   type        = string
   description = "Cloudflare Worker script name."
-  default     = "cloudflare-nix"
+  default     = "cloudflare-nix-api"
 }
 
 variable "worker_compatibility_date" {

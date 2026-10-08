@@ -37,7 +37,7 @@ override_data {
 
 variables {
   account_id  = "0123456789abcdef0123456789abcdef"
-  hostname    = "cloudflare-nix.example.workers.dev"
+  hostname    = "cloudflare-nix-api.example.workers.dev"
   bucket_name = "nix-cache"
 }
 
@@ -55,7 +55,7 @@ run "defaults" {
   }
 
   assert {
-    condition     = output.url == "https://cloudflare-nix.example.workers.dev"
+    condition     = output.url == "https://cloudflare-nix-api.example.workers.dev"
     error_message = "url should be the workers.dev URL"
   }
 
@@ -119,7 +119,7 @@ run "oidc_providers" {
       CLOUDFLARE_NIX_API_OIDC_PROVIDERS = [
         {
           issuer   = "https://token.actions.githubusercontent.com"
-          audience = "https://cloudflare-nix.example.workers.dev"
+          audience = "https://cloudflare-nix-api.example.workers.dev"
           claims   = [{ ref = "refs/heads/main", repository_owner_id = "100000001" }]
         },
         {
@@ -130,7 +130,7 @@ run "oidc_providers" {
         },
         {
           issuer   = "https://cf-sts.example.com"
-          audience = "https://cloudflare-nix.example.workers.dev"
+          audience = "https://cloudflare-nix-api.example.workers.dev"
           typ      = "at+jwt"
           claims   = [{ profile = "nix-push" }]
         },
