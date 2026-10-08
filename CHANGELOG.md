@@ -5,8 +5,7 @@
 
 ### ⚠ BREAKING CHANGES
 
-* the Terraform module's worker_name defaults to cloudflare-nix-api (was cloudflare-nix), and with it the workers.dev hostname.
-* nothing takes the old names. The Worker's bindings are CLOUDFLARE_NIX_API_* (were CF_NIX_API_*). The Terraform module's worker_name defaults to cloudflare-nix (was cf-nix), and it downloads releases from cf-contrib/cloudflare-nix.
+* the project is cloudflare-nix (was cf-nix), and nothing takes the old names. The Worker's bindings are CLOUDFLARE_NIX_API_* (were CF_NIX_API_*). The Terraform module's worker_name defaults to cloudflare-nix-api (was cf-nix), and with it the workers.dev hostname, and the module downloads releases from cf-contrib/cloudflare-nix.
 
 ### Code Refactoring
 
