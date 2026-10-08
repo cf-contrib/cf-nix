@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/cf-contrib/cloudflare-nix/compare/v0.9.0...v0.10.0) (2026-10-08)
+
+
+### Features
+
+* ready only while the signing key can be read ([6d8d46d](https://github.com/cf-contrib/cloudflare-nix/commit/6d8d46df4b7e84f244519f27bed4977f060d988b))
+
 ## [0.9.0](https://github.com/cf-contrib/cloudflare-nix/compare/v0.8.0...v0.9.0) (2026-10-08)
 
 
