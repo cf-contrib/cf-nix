@@ -309,7 +309,7 @@ dependencies = [
 [[package]]
 name = "cloudflare-sts-core"
 version = "0.8.0"
-source = "git+https://github.com/cf-contrib/cloudflare-sts?tag=v0.18.0#d5256dd93ffc1f3d1c65edac1b94e8bd3ad21b52"
+source = "git+https://github.com/cf-contrib/cloudflare-sts?tag=v0.19.0#54fa785468dcaa20967f2e12aa63e5adb47a117c"
 dependencies = [
  "base64 0.23.1",
  "serde",
