@@ -92,7 +92,7 @@ does, and numbers and booleans compare as written (`"email_verified": "true"`).
 > for GitLab, `terraform_organization_id` for Terraform Cloud), or any project on
 > the issuer can upload. The Worker doesn't know which issuers these are: the
 > claim sets are the whole policy. Issuers that only give tokens to people who
-> passed your policy, like Cloudflare Access or a cf-sts broker, need no
+> passed your policy, like Cloudflare Access or a cloudflare-sts broker, need no
 > pin.
 
 The config is checked when an upload reads it. An invalid one fails closed:
@@ -118,11 +118,11 @@ Nix reads the netrc again for every request, so for a longer one, rewrite the
 file with a fresh token while `nix copy` runs. Keep the file readable only by
 you (`chmod 600`).
 
-### People: through cf-sts
+### People: through cloudflare-sts
 
 The cache takes OIDC tokens only, so a person needs one from an identity
 provider, such as a [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/validating-json/)
-application. A [cf-sts](https://github.com/cf-contrib/cf-sts)
+application. A [cloudflare-sts](https://github.com/cf-contrib/cloudflare-sts)
 broker exchanges it for a short-lived token of its own for the cache. Trust the
 broker as one more provider, for its access tokens only, pinned to the profile
 that issues for the cache:
@@ -138,8 +138,8 @@ that issues for the cache:
 
 The broker's profile decides who may upload, by the claims of the person's own
 token, `email` from Cloudflare Access say (see the broker's
-[People](https://github.com/cf-contrib/cf-sts/tree/main/crates/cf-sts-api#people)
-and [Tokens for other services](https://github.com/cf-contrib/cf-sts/tree/main/crates/cf-sts-api#tokens-for-other-services)).
+[People](https://github.com/cf-contrib/cloudflare-sts/tree/main/crates/cloudflare-sts-api#people)
+and [Tokens for other services](https://github.com/cf-contrib/cloudflare-sts/tree/main/crates/cloudflare-sts-api#tokens-for-other-services)).
 A person signs in once, then exchanges a token and uploads. The broker's token
 lasts the profile's `ttl`, never past the person's own; run it again once it
 has expired. No token goes on a command line, where the process list would

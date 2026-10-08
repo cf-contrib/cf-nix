@@ -11,10 +11,10 @@
 //!
 //! The provider list's format is here too: [`ProviderConfig`], a
 //! [`Provider`] with the claim sets that let its tokens upload, and what
-//! parsing checks. Verifying a token against it is cf-sts-core's, which the
+//! parsing checks. Verifying a token against it is cloudflare-sts-core's, which the
 //! auth [`layer`](super::layer) calls.
 
-use cf_sts_core::{ClaimRules, Provider, Providers};
+use cloudflare_sts_core::{ClaimRules, Provider, Providers};
 use serde::Deserialize;
 use worker::{Bucket, Env, Error, SecretStore, js_sys, send::SendWrapper, wasm_bindgen::JsValue};
 
@@ -101,7 +101,7 @@ pub struct ProviderConfig {
     /// Where its keys are. `None` means its metadata says.
     #[serde(default)]
     jwks_uri: Option<String>,
-    /// The `typ` its tokens must have: `at+jwt` for a cf-sts
+    /// The `typ` its tokens must have: `at+jwt` for a cloudflare-sts
     /// broker's, so no other token it signs can upload. `None` takes any.
     #[serde(default)]
     typ: Option<String>,
@@ -149,7 +149,7 @@ impl ProviderConfig {
         }
     }
 
-    /// The providers in `json`, checked: cf-sts-core checks the providers,
+    /// The providers in `json`, checked: cloudflare-sts-core checks the providers,
     /// and each one's claim sets, saying where anything's wrong.
     fn parse(json: &str) -> Result<Providers<Self>, String> {
         let providers: Providers<Self> = serde_json::from_str(json).map_err(|err| {
@@ -214,7 +214,7 @@ mod tests {
     const CACHE: &str = "https://cache.example.com";
 
     /// A provider list: GitHub Actions, pinned to the test org, and a
-    /// cf-sts broker, whose access tokens only.
+    /// cloudflare-sts broker, whose access tokens only.
     fn providers() -> Value {
         json!([
             { "issuer": ISSUER, "audience": CACHE, "claims": [{ "repository_owner_id": "100000001" }] },
@@ -250,7 +250,7 @@ mod tests {
         let providers = parse(&providers());
         assert_eq!(providers.len(), 2);
         assert_eq!(providers[0].typ(), None);
-        assert_eq!(providers[1].typ(), Some(cf_sts_core::AT_JWT));
+        assert_eq!(providers[1].typ(), Some(cloudflare_sts_core::AT_JWT));
     }
 
     #[test]

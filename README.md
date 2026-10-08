@@ -107,7 +107,7 @@ Also: this is a hobby project. I wanted an excuse to spend more time with Cloudf
            --option netrc-file "$RUNNER_TEMP/netrc" \
            ./result
    ```
-   The job's token lasts 5 minutes, so the upload has to finish within that. For other issuers, see the [Worker's README](crates/cloudflare-nix-api#authentication). People can upload with a token from their identity provider, such as Cloudflare Access, through a [cf-sts](https://github.com/cf-contrib/cf-sts) broker, with [one exchange](crates/cloudflare-nix-api#people-through-cf-sts) and no refresh.
+   The job's token lasts 5 minutes, so the upload has to finish within that. For other issuers, see the [Worker's README](crates/cloudflare-nix-api#authentication). People can upload with a token from their identity provider, such as Cloudflare Access, through a [cloudflare-sts](https://github.com/cf-contrib/cloudflare-sts) broker, with [one exchange](crates/cloudflare-nix-api#people-through-cloudflare-sts) and no refresh.
 
 ## Development
 

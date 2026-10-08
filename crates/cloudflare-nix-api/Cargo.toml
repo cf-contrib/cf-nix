@@ -26,9 +26,9 @@ tower-layer = "0.3"
 tower-service = "0.3"
 
 # Verifies upload tokens: their providers, keys and claim sets, through
-# WebCrypto. From cf-sts's release on GitHub: it isn't published
+# WebCrypto. From cloudflare-sts's release on GitHub: it isn't published
 # to crates.io.
-cf-sts-core = { git = "https://github.com/cf-contrib/cf-sts", tag = "v0.14.0" }
+cloudflare-sts-core = { git = "https://github.com/cf-contrib/cloudflare-sts", tag = "v0.18.0" }
 
 # The provider list. Already in the tree via `worker`.
 serde = { version = "1", features = ["derive"] }

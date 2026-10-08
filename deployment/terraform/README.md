@@ -34,7 +34,7 @@ module "cloudflare_nix_api" {
       ]
     },
     {
-      # People, through a cf-sts broker: its access tokens only, from
+      # People, through a cloudflare-sts broker: its access tokens only, from
       # the profile that issues them for this cache.
       issuer = "https://cloudflare-sts-api.example.com"
       typ    = "at+jwt"
@@ -98,7 +98,7 @@ Then set up upload credentials as described in the Worker's
 | `bucket_name` | yes | | R2 bucket to create for `.narinfo` and `.nar` objects. |
 | `expire_after_days` | no | `45` | Delete objects this many days after upload. `null` keeps them. |
 | `signing_key_secret` | no | `null` | `{ secret_store_id, secret_name }` of the signing key. `null`: uploaders must sign. |
-| `oidc_providers` | no | `[]` | Identity providers whose tokens may upload: `{ issuer, audience?, jwks_uri?, typ?, claims }`. `audience` defaults to the cache URL; `typ` is the type the provider's tokens must have, `"at+jwt"` for a cf-sts broker; `claims` is a list of claim sets, any one of which must match. Empty turns uploads off. See the Worker's [Authentication](../../crates/cloudflare-nix-api/README.md#authentication). |
+| `oidc_providers` | no | `[]` | Identity providers whose tokens may upload: `{ issuer, audience?, jwks_uri?, typ?, claims }`. `audience` defaults to the cache URL; `typ` is the type the provider's tokens must have, `"at+jwt"` for a cloudflare-sts broker; `claims` is a list of claim sets, any one of which must match. Empty turns uploads off. See the Worker's [Authentication](../../crates/cloudflare-nix-api/README.md#authentication). |
 | `release_tag` | no | this module's release | Release to deploy, e.g. `v1.2.3`, or `"latest"`. |
 | `bundle_dir` | no | `null` | A local `worker-build --release` output directory to deploy instead of a release. |
 | `worker_name` | no | `cloudflare-nix-api` | Cloudflare Worker script name. |

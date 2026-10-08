@@ -9,7 +9,7 @@
 //! pass straight through.
 //!
 //! OIDC auth, for any issuer: GitHub Actions, Cloudflare Access, GitLab, or
-//! a cf-sts broker. cf-sts-core verifies the token against the
+//! a cloudflare-sts broker. cloudflare-sts-core verifies the token against the
 //! provider its `iss` names, as RFC 7519 and RFC 8725 say, and then the
 //! token is accepted if any of that provider's claim sets matches. This layer
 //! is what's left: finding the token, and answering for it.
@@ -28,8 +28,8 @@ use axum::{
     http::{HeaderMap, Method, header::AUTHORIZATION},
     response::{IntoResponse, Response},
 };
-use cf_sts_core::Provider;
 use cloudflare_nix_sdk::v1::{self, ErrorCode};
+use cloudflare_sts_core::Provider;
 use http_auth_basic::Credentials;
 use http_body_util::BodyExt;
 use tower_layer::Layer;
@@ -80,7 +80,7 @@ impl<S> Authorize<S> {
     /// # Errors
     ///
     /// Why it may not: uploads are off (no providers), there's no token, or
-    /// cf-sts-core refused it.
+    /// cloudflare-sts-core refused it.
     pub async fn authorize(&self, headers: &HeaderMap) -> Result<Identity, v1::Error> {
         let providers = self.config.providers();
         if providers.is_empty() {
@@ -162,25 +162,25 @@ fn token_from_header(header: Option<&str>) -> Result<String, v1::Error> {
     }
 }
 
-/// What cf-sts-core refused, as the API's error: an invalid token is the
+/// What cloudflare-sts-core refused, as the API's error: an invalid token is the
 /// uploader's to fix (`unauthorized`), one no claim set allows isn't theirs
 /// to have (`forbidden`), and an issuer that can't be reached isn't their
 /// fault (`upstream_error`).
-fn error_from_core(err: cf_sts_core::Error) -> v1::Error {
+fn error_from_core(err: cloudflare_sts_core::Error) -> v1::Error {
     match err {
-        cf_sts_core::Error::InvalidToken(message) => {
+        cloudflare_sts_core::Error::InvalidToken(message) => {
             v1::Error::new(ErrorCode::Unauthorized, message)
         }
         // Which claims would have matched isn't said: that's the policy, not
         // the caller's to probe.
-        cf_sts_core::Error::InsufficientScope { issuer, subject } => v1::Error::new(
+        cloudflare_sts_core::Error::InsufficientScope { issuer, subject } => v1::Error::new(
             ErrorCode::Forbidden,
             format!(
                 "{}: no claim set for {issuer} matched",
                 subject.unwrap_or_default()
             ),
         ),
-        cf_sts_core::Error::TemporarilyUnavailable(message) => {
+        cloudflare_sts_core::Error::TemporarilyUnavailable(message) => {
             v1::Error::new(ErrorCode::UpstreamError, message)
         }
     }
@@ -193,7 +193,7 @@ fn error_from_core(err: cf_sts_core::Error) -> v1::Error {
 ///
 /// An issuer that couldn't be reached isn't the uploader's fault, so what
 /// went wrong is logged and the response only says it was the issuer, as
-/// cf-sts answers its own faults.
+/// cloudflare-sts answers its own faults.
 async fn reject(req: Request, mut err: v1::Error) -> Response {
     if err.error == ErrorCode::UpstreamError {
         console_error!("auth upstream failure: {}", err.message);
@@ -286,12 +286,12 @@ mod tests {
     fn core_errors_keep_their_meaning() {
         let cases = [
             (
-                cf_sts_core::Error::InvalidToken("token expired".into()),
+                cloudflare_sts_core::Error::InvalidToken("token expired".into()),
                 ErrorCode::Unauthorized,
                 "token expired",
             ),
             (
-                cf_sts_core::Error::InsufficientScope {
+                cloudflare_sts_core::Error::InsufficientScope {
                     issuer: "https://issuer.example.com".into(),
                     subject: Some("repo:example-org/app:ref:refs/heads/main".into()),
                 },
@@ -299,7 +299,9 @@ mod tests {
                 "repo:example-org/app:ref:refs/heads/main: no claim set for https://issuer.example.com matched",
             ),
             (
-                cf_sts_core::Error::TemporarilyUnavailable("fetching keys returned 500".into()),
+                cloudflare_sts_core::Error::TemporarilyUnavailable(
+                    "fetching keys returned 500".into(),
+                ),
                 ErrorCode::UpstreamError,
                 "fetching keys returned 500",
             ),

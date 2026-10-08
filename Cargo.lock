@@ -227,19 +227,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cf-sts-core"
-version = "0.8.0"
-source = "git+https://github.com/cf-contrib/cf-sts?tag=v0.14.0#c8b74716b893b7f4c8e7a63ff64d6def5a387b36"
-dependencies = [
- "base64 0.23.1",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "web-sys",
- "worker",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -281,8 +268,8 @@ dependencies = [
  "axum",
  "base64 0.23.1",
  "bytes",
- "cf-sts-core",
  "cloudflare-nix-sdk",
+ "cloudflare-sts-core",
  "http-auth-basic",
  "http-body-util",
  "rand_chacha",
@@ -317,6 +304,19 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "cloudflare-sts-core"
+version = "0.8.0"
+source = "git+https://github.com/cf-contrib/cloudflare-sts?tag=v0.18.0#d5256dd93ffc1f3d1c65edac1b94e8bd3ad21b52"
+dependencies = [
+ "base64 0.23.1",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "web-sys",
+ "worker",
 ]
 
 [[package]]
