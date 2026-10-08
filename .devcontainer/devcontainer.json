@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/devcontainers/spec/refs/heads/main/schemas/devContainer.base.schema.json",
-  "name": "cf-nix",
+  "name": "cloudflare-nix",
   "service": "workspace",
   "dockerComposeFile": "docker-compose.yml",
   "workspaceFolder": "/home/vscode/workspace",

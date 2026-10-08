@@ -19,23 +19,23 @@ use serde::Deserialize;
 use worker::{Bucket, Env, Error, SecretStore, js_sys, send::SendWrapper, wasm_bindgen::JsValue};
 
 /// The binding of the R2 bucket every narinfo and NAR is stored in.
-pub const BUCKET_KEY: &str = "CF_NIX_API_BUCKET";
+pub const BUCKET_KEY: &str = "CLOUDFLARE_NIX_API_BUCKET";
 
 /// The binding of the narinfo signing key, `<key-name>:<base64>`. Optional:
 /// without it, only narinfo the uploader signed can be stored.
-pub const SECRET_KEY: &str = "CF_NIX_API_SECRET";
+pub const SECRET_KEY: &str = "CLOUDFLARE_NIX_API_SECRET";
 
 /// The binding of the providers whose tokens may upload.
-pub const PROVIDERS_KEY: &str = "CF_NIX_API_OIDC_PROVIDERS";
+pub const PROVIDERS_KEY: &str = "CLOUDFLARE_NIX_API_OIDC_PROVIDERS";
 
 /// What the Worker is configured with, from its bindings.
 pub struct Config {
-    /// `CF_NIX_API_BUCKET`.
+    /// `CLOUDFLARE_NIX_API_BUCKET`.
     bucket: BucketConfig,
-    /// `CF_NIX_API_SECRET`'s binding, not yet its value. None signs
+    /// `CLOUDFLARE_NIX_API_SECRET`'s binding, not yet its value. None signs
     /// nothing.
     signing_key: Option<Secret>,
-    /// `CF_NIX_API_OIDC_PROVIDERS`. None turns uploads off.
+    /// `CLOUDFLARE_NIX_API_OIDC_PROVIDERS`. None turns uploads off.
     providers: Providers<ProviderConfig>,
 }
 
@@ -44,9 +44,9 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// When `CF_NIX_API_BUCKET` isn't bound to an R2 bucket,
-    /// `CF_NIX_API_SECRET` is bound but not from Secrets Store, or
-    /// `CF_NIX_API_OIDC_PROVIDERS` isn't a valid provider list.
+    /// When `CLOUDFLARE_NIX_API_BUCKET` isn't bound to an R2 bucket,
+    /// `CLOUDFLARE_NIX_API_SECRET` is bound but not from Secrets Store, or
+    /// `CLOUDFLARE_NIX_API_OIDC_PROVIDERS` isn't a valid provider list.
     pub fn from_env(env: &Env) -> worker::Result<Self> {
         Ok(Self {
             bucket: BucketConfig::from_env(env)?,
@@ -129,14 +129,14 @@ impl Provider for ProviderConfig {
 }
 
 impl ProviderConfig {
-    /// The providers in `CF_NIX_API_OIDC_PROVIDERS`: none if it's unset
+    /// The providers in `CLOUDFLARE_NIX_API_OIDC_PROVIDERS`: none if it's unset
     /// or empty, which turns uploads off.
     fn from_env(env: &Env) -> worker::Result<Providers<Self>> {
         let value = env.var(PROVIDERS_KEY).ok().map(|value| value.to_string());
         Self::from_var(value.as_deref()).map_err(Error::RustError)
     }
 
-    /// The providers in `value`, `CF_NIX_API_OIDC_PROVIDERS`'s value:
+    /// The providers in `value`, `CLOUDFLARE_NIX_API_OIDC_PROVIDERS`'s value:
     /// none if it's unset or empty, which turns uploads off.
     ///
     /// # Errors

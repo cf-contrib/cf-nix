@@ -3,7 +3,7 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "package-name": "cf-nix",
+      "package-name": "cloudflare-nix",
       "include-v-in-tag": true,
       "include-v-in-release-name": true,
       "include-component-in-tag": false,
@@ -14,23 +14,23 @@
         "deployment/terraform/variables.tf",
         {
           "type": "toml",
-          "path": "crates/cf-nix-api/Cargo.toml",
+          "path": "crates/cloudflare-nix-api/Cargo.toml",
           "jsonpath": "$.package.version"
         },
         {
           "type": "toml",
           "path": "Cargo.lock",
-          "jsonpath": "$.package[?(@.name.value==='cf-nix-api')].version"
+          "jsonpath": "$.package[?(@.name.value==='cloudflare-nix-api')].version"
         },
         {
           "type": "toml",
-          "path": "crates/cf-nix-sdk/Cargo.toml",
+          "path": "crates/cloudflare-nix-sdk/Cargo.toml",
           "jsonpath": "$.package.version"
         },
         {
           "type": "toml",
           "path": "Cargo.lock",
-          "jsonpath": "$.package[?(@.name.value==='cf-nix-sdk')].version"
+          "jsonpath": "$.package[?(@.name.value==='cloudflare-nix-sdk')].version"
         }
       ]
     }

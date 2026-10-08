@@ -1,13 +1,13 @@
-# cf-nix-sdk
+# cloudflare-nix-sdk
 
-> The HTTP API of [cf-nix](../..), as an OpenAPI document, and the Rust
-> generated from it: the types, the server traits the [Worker](../cf-nix-api)
+> The HTTP API of [cloudflare-nix](../..), as an OpenAPI document, and the Rust
+> generated from it: the types, the server traits the [Worker](../cloudflare-nix-api)
 > implements, and a client.
 
 Everything is under `v1`:
 
 ```rust
-use cf_nix_sdk::v1::*;
+use cloudflare_nix_sdk::v1::*;
 ```
 
 ## What is in it
@@ -22,9 +22,9 @@ use cf_nix_sdk::v1::*;
 ## Calling the API
 
 ```rust
-use cf_nix_sdk::v1::HttpClient;
+use cloudflare_nix_sdk::v1::HttpClient;
 
-let client = HttpClient::new().with_base_url("https://cf-nix.example.workers.dev");
+let client = HttpClient::new().with_base_url("https://cloudflare-nix.example.workers.dev");
 let info = client.get_nar_info("j5m1qd2dbsmhq0mw13yb8wijnm3pq4z0").await?;
 
 // Uploads take an OIDC token as the password of HTTP Basic credentials.

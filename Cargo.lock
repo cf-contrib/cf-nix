@@ -227,52 +227,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cf-nix-api"
-version = "0.8.0"
-dependencies = [
- "async-trait",
- "axum",
- "base64 0.23.1",
- "bytes",
- "cf-nix-sdk",
- "cf-sts-core",
- "http-auth-basic",
- "http-body-util",
- "rand_chacha",
- "reqwest",
- "rsa",
- "serde",
- "serde_json",
- "tokio",
- "tower-layer",
- "tower-service",
- "worker",
- "worker-macros",
-]
-
-[[package]]
-name = "cf-nix-sdk"
-version = "0.8.0"
-dependencies = [
- "async-trait",
- "axum",
- "base64 0.23.1",
- "bytes",
- "ed25519-dalek",
- "futures-util",
- "http-body-util",
- "jsonschema 0.58.5",
- "mime",
- "openapi-to-rust",
- "reqwest",
- "reqwest-middleware",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
-]
-
-[[package]]
 name = "cf-sts-core"
 version = "0.8.0"
 source = "git+https://github.com/cf-contrib/cf-sts?tag=v0.14.0#c8b74716b893b7f4c8e7a63ff64d6def5a387b36"
@@ -317,6 +271,52 @@ dependencies = [
  "js-sys",
  "num-traits",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "cloudflare-nix-api"
+version = "0.8.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "bytes",
+ "cf-sts-core",
+ "cloudflare-nix-sdk",
+ "http-auth-basic",
+ "http-body-util",
+ "rand_chacha",
+ "reqwest",
+ "rsa",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower-layer",
+ "tower-service",
+ "worker",
+ "worker-macros",
+]
+
+[[package]]
+name = "cloudflare-nix-sdk"
+version = "0.8.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "bytes",
+ "ed25519-dalek",
+ "futures-util",
+ "http-body-util",
+ "jsonschema 0.58.5",
+ "mime",
+ "openapi-to-rust",
+ "reqwest",
+ "reqwest-middleware",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

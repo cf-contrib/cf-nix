@@ -1,5 +1,5 @@
 {
-  description = "Fixture flake for cf-nix R2 narinfo/nar testing";
+  description = "Fixture flake for cloudflare-nix R2 narinfo/nar testing";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";

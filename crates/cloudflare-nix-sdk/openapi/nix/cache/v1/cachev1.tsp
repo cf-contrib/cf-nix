@@ -16,7 +16,7 @@ using Versioning;
  * this document (a body over the size limit, the wrong content type) is
  * rejected before it reaches the Worker, as `application/problem+json`.
  */
-@service(#{ title: "cf-nix" })
+@service(#{ title: "cloudflare-nix" })
 @info(#{ license: #{ name: "MIT" } })
 @tagMetadata("CacheService", #{ description: "The Nix binary cache protocol." })
 @versioned(Versions)
@@ -184,7 +184,7 @@ interface CacheService {
   /**
    * Parses and validates the narinfo, and requires its `StorePath` to match
    * the hash. It is stored as sent. If it has no `Sig:`, the Worker signs it
-   * with `CF_NIX_API_SECRET`, and rejects it when no key is set.
+   * with `CLOUDFLARE_NIX_API_SECRET`, and rejects it when no key is set.
    */
   @summary("Upload a narinfo")
   @operationId("putNarInfo")

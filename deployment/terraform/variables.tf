@@ -73,7 +73,7 @@ variable "oidc_providers" {
 
 variable "release_tag" {
   type        = string
-  description = "cf-nix release to deploy, e.g. v1.2.3, or \"latest\". Defaults to the release this module comes from."
+  description = "cloudflare-nix release to deploy, e.g. v1.2.3, or \"latest\". Defaults to the release this module comes from."
   default     = "v0.8.0" # x-release-please-version
 }
 
@@ -86,7 +86,7 @@ variable "bundle_dir" {
 variable "worker_name" {
   type        = string
   description = "Cloudflare Worker script name."
-  default     = "cf-nix"
+  default     = "cloudflare-nix"
 }
 
 variable "worker_compatibility_date" {

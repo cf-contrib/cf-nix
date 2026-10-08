@@ -1,5 +1,5 @@
 {
-  "name": "cf-nix-openapi",
+  "name": "cloudflare-nix-openapi",
   "version": "0.0.0",
   "type": "module",
   "private": true,

@@ -5,7 +5,7 @@ use std::{
 
 use axum::{Json, Router, routing};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use cf_nix_sdk::v1::HttpClient;
+use cloudflare_nix_sdk::v1::HttpClient;
 use http_auth_basic::Credentials;
 use rand_chacha::{ChaCha8Rng, rand_core::SeedableRng};
 use rsa::{
@@ -19,11 +19,11 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 /// Where `wrangler dev` serves the Worker, and the audience it expects:
-/// `CF_NIX_API_URL`, which tests/run.sh sets for the one it starts, or
+/// `CLOUDFLARE_NIX_API_URL`, which tests/run.sh sets for the one it starts, or
 /// `wrangler dev`'s own default.
 pub fn base_url() -> &'static str {
     static BASE_URL: LazyLock<String> = LazyLock::new(|| {
-        std::env::var("CF_NIX_API_URL").unwrap_or_else(|_| "http://127.0.0.1:8787".into())
+        std::env::var("CLOUDFLARE_NIX_API_URL").unwrap_or_else(|_| "http://127.0.0.1:8787".into())
     });
     &BASE_URL
 }

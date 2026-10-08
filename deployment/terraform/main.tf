@@ -5,7 +5,7 @@ locals {
   # Upload auth: off unless an issuer is configured. Unset optional fields are
   # left out rather than sent as null.
   auth_vars = {
-    CF_NIX_API_OIDC_PROVIDERS = length(var.oidc_providers) == 0 ? null : jsonencode([
+    CLOUDFLARE_NIX_API_OIDC_PROVIDERS = length(var.oidc_providers) == 0 ? null : jsonencode([
       for i in var.oidc_providers : merge(
         { issuer = i.issuer, audience = coalesce(i.audience, local.url), claims = i.claims },
         i.jwks_uri == null ? {} : { jwks_uri = i.jwks_uri },
@@ -59,7 +59,7 @@ resource "cloudflare_worker_version" "this" {
   bindings = concat(
     [
       {
-        name        = "CF_NIX_API_BUCKET"
+        name        = "CLOUDFLARE_NIX_API_BUCKET"
         type        = "r2_bucket"
         bucket_name = cloudflare_r2_bucket.this.name
       },
@@ -67,7 +67,7 @@ resource "cloudflare_worker_version" "this" {
     # Only ever from Secrets Store, so the signing key never enters Terraform state.
     var.signing_key_secret == null ? [] : [
       {
-        name        = "CF_NIX_API_SECRET"
+        name        = "CLOUDFLARE_NIX_API_SECRET"
         type        = "secrets_store_secret"
         store_id    = var.signing_key_secret.secret_store_id
         secret_name = var.signing_key_secret.secret_name

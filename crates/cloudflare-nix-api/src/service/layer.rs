@@ -1,5 +1,5 @@
 //! Upload auth, as a tower layer: every `PUT` needs an OIDC token from a
-//! provider `CF_NIX_API_OIDC_PROVIDERS` names, as the password of HTTP
+//! provider `CLOUDFLARE_NIX_API_OIDC_PROVIDERS` names, as the password of HTTP
 //! Basic credentials, since a netrc file is the only place Nix sends them from.
 //! The username isn't read.
 //!
@@ -28,8 +28,8 @@ use axum::{
     http::{HeaderMap, Method, header::AUTHORIZATION},
     response::{IntoResponse, Response},
 };
-use cf_nix_sdk::v1::{self, ErrorCode};
 use cf_sts_core::Provider;
+use cloudflare_nix_sdk::v1::{self, ErrorCode};
 use http_auth_basic::Credentials;
 use http_body_util::BodyExt;
 use tower_layer::Layer;

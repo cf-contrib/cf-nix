@@ -1,14 +1,14 @@
-# cf-nix
+# cloudflare-nix
 
 > A Nix binary cache on Cloudflare Workers and R2: substitutes come from
 > Cloudflare's edge, and uploads authenticate with an OIDC token from an issuer
 > you trust (GitHub Actions, Cloudflare Access, …), so there's no shared upload
 > secret to store or rotate.
 
-[![CI](https://github.com/cf-contrib/cf-nix/actions/workflows/ci.yml/badge.svg)](https://github.com/cf-contrib/cf-nix/actions/workflows/ci.yml)
+[![CI](https://github.com/cf-contrib/cloudflare-nix/actions/workflows/ci.yml/badge.svg)](https://github.com/cf-contrib/cloudflare-nix/actions/workflows/ci.yml)
 [![Rust (edition 2021)](https://img.shields.io/badge/Rust-2021-black?logo=rust)](https://www.rust-lang.org/)
 [![Nix Flake](https://img.shields.io/badge/Nix-Flake-5277C3?logo=nixos&logoColor=white)](https://nixos.wiki/wiki/Flakes)
-[![License: MIT](https://img.shields.io/github/license/cf-contrib/cf-nix)](LICENSE)
+[![License: MIT](https://img.shields.io/github/license/cf-contrib/cloudflare-nix)](LICENSE)
 
 > [!WARNING]
 > **Pre-1.0.** The Worker's bindings and the module's inputs may still change
@@ -16,8 +16,8 @@
 
 | | Ships as | What it is |
 |---|---|---|
-| [`crates/cf-nix-api`](crates/cf-nix-api) | `index.js` + `index_bg.wasm` in [Releases](https://github.com/cf-contrib/cf-nix/releases) | The server, a Cloudflare Worker written in Rust. Serves narinfo and NARs from R2, validates and signs uploads, and authorizes uploaders by their OIDC token. |
-| [`crates/cf-nix-sdk`](crates/cf-nix-sdk) | A Rust crate in this workspace; not published | The HTTP API's [OpenAPI document](crates/cf-nix-sdk/openapi/nix/cache/v1/cachev1.yaml), and the types, server traits and client generated from it; hand-written beside them, the narinfo format and the health endpoints. The Worker builds on it. |
+| [`crates/cloudflare-nix-api`](crates/cloudflare-nix-api) | `index.js` + `index_bg.wasm` in [Releases](https://github.com/cf-contrib/cloudflare-nix/releases) | The server, a Cloudflare Worker written in Rust. Serves narinfo and NARs from R2, validates and signs uploads, and authorizes uploaders by their OIDC token. |
+| [`crates/cloudflare-nix-sdk`](crates/cloudflare-nix-sdk) | A Rust crate in this workspace; not published | The HTTP API's [OpenAPI document](crates/cloudflare-nix-sdk/openapi/nix/cache/v1/cachev1.yaml), and the types, server traits and client generated from it; hand-written beside them, the narinfo format and the health endpoints. The Worker builds on it. |
 | [`deployment/terraform`](deployment/terraform) | `//deployment/terraform?ref=<version>` | Deploys the released Worker with its R2 bucket and bindings. |
 
 The Worker and the module are released together from one tag.
@@ -29,7 +29,7 @@ sequenceDiagram
     participant Reader as nix (substitute)
     participant Uploader as nix copy
     participant Issuer as OIDC issuer
-    participant Api as cf-nix-api
+    participant Api as cloudflare-nix-api
     participant R2 as R2 bucket
 
     Note over Reader,R2: Reads are public
@@ -37,7 +37,7 @@ sequenceDiagram
     Api->>R2: get
     Api-->>Reader: object
 
-    Note over Uploader,R2: Uploads need a token from an issuer cf-nix-api trusts
+    Note over Uploader,R2: Uploads need a token from an issuer cloudflare-nix-api trusts
     Uploader->>Issuer: token for the cache's audience
     Issuer-->>Uploader: JWT (5 minutes for GitHub Actions)
     Uploader->>Api: PUT, HTTP Basic with the token as the password
@@ -53,7 +53,7 @@ the cache's audience, that matches one of that issuer's claim sets: for GitHub
 Actions, your org's repos on `main`, say; for Cloudflare Access, your team. The
 Worker never calls the issuer per request, only for its keys.
 
-The only long-lived secret is the narinfo signing key, in Secrets Store. See the [Worker's README](crates/cf-nix-api#authentication) for the details.
+The only long-lived secret is the narinfo signing key, in Secrets Store. See the [Worker's README](crates/cloudflare-nix-api#authentication) for the details.
 
 ## Do you need it?
 
@@ -63,7 +63,7 @@ Nix supports S3-compatible caches natively with the [`s3://`](https://nix.dev/ma
 |---|---|---|---|
 | `s3://` to R2 | An S3 key pair per uploader | On every uploader (`secret-key-files`) | Nix built-in; opaque blob storage |
 | Public R2 bucket + `s3://` uploads | An S3 key pair per uploader | On every uploader | Anonymous reads via a custom domain |
-| **cf-nix** | **A short-lived OIDC token from an issuer you trust** | **In the Worker (Secrets Store)** | Validates narinfo; one-request mass query |
+| **cloudflare-nix** | **A short-lived OIDC token from an issuer you trust** | **In the Worker (Secrets Store)** | Validates narinfo; one-request mass query |
 
 If S3 keys on every uploader are acceptable to you, `s3://` to R2 is less to run.
 
@@ -75,7 +75,7 @@ Also: this is a hobby project. I wanted an excuse to spend more time with Cloudf
 2. **Deploy the Worker** with the [Terraform module](deployment/terraform), on workers.dev (a custom domain is optional), then check that `<cache-url>/health/ready` returns `200`.
 3. **Point Nix at it** in `nix.conf`:
    ```ini
-   substituters = https://cf-nix.example.workers.dev https://cache.nixos.org
+   substituters = https://cloudflare-nix.example.workers.dev https://cache.nixos.org
    trusted-public-keys = cache.example.com-1:<base64-public-key> cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
    ```
 4. **Upload** with `nix copy --to 'https://<cache>?compression=none' <paths>` (the cache stores uncompressed NARs), with the token in a netrc file: that's the only place Nix sends credentials from. In GitHub Actions:
@@ -88,7 +88,7 @@ Also: this is a hobby project. I wanted an excuse to spend more time with Cloudf
      - run: nix build .#app
      - name: Upload
        env:
-         NIX_CACHE_DOMAIN: cf-nix.example.workers.dev
+         NIX_CACHE_DOMAIN: cloudflare-nix.example.workers.dev
        run: |
          github_token=$(curl -fsS \
            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
@@ -107,7 +107,7 @@ Also: this is a hobby project. I wanted an excuse to spend more time with Cloudf
            --option netrc-file "$RUNNER_TEMP/netrc" \
            ./result
    ```
-   The job's token lasts 5 minutes, so the upload has to finish within that. For other issuers, see the [Worker's README](crates/cf-nix-api#authentication). People can upload with a token from their identity provider, such as Cloudflare Access, through a [cf-sts](https://github.com/cf-contrib/cf-sts) broker, with [one exchange](crates/cf-nix-api#people-through-cf-sts) and no refresh.
+   The job's token lasts 5 minutes, so the upload has to finish within that. For other issuers, see the [Worker's README](crates/cloudflare-nix-api#authentication). People can upload with a token from their identity provider, such as Cloudflare Access, through a [cf-sts](https://github.com/cf-contrib/cf-sts) broker, with [one exchange](crates/cloudflare-nix-api#people-through-cf-sts) and no refresh.
 
 ## Development
 
@@ -118,7 +118,7 @@ nix develop -c cargo test                                   # the Worker's and t
 (cd deployment/terraform && nix develop -c sh -c "tofu init -backend=false && tofu test")   # the module's tests
 ```
 
-Each directory's README has the rest: the [Worker's](crates/cf-nix-api#development) covers the bundle, `wrangler dev` and the integration tests; the [SDK's](crates/cf-nix-sdk#generated-code) how its code is generated; and the [module's](deployment/terraform#development) its tests.
+Each directory's README has the rest: the [Worker's](crates/cloudflare-nix-api#development) covers the bundle, `wrangler dev` and the integration tests; the [SDK's](crates/cloudflare-nix-sdk#generated-code) how its code is generated; and the [module's](deployment/terraform#development) its tests.
 
 Releases are cut by release-please from Conventional Commits. Each release is tagged `vX.Y.Z` and attaches `index.js` and `index_bg.wasm`. Pin the module to a release tag or its commit SHA: before 1.0 there is no floating major tag, because minor releases may break.
 

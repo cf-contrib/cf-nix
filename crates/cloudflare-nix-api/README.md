@@ -1,11 +1,11 @@
-# cf-nix-api
+# cloudflare-nix-api
 
-> The Worker half of [cf-nix](../..): a Nix binary cache on Cloudflare
+> The Worker half of [cloudflare-nix](../..): a Nix binary cache on Cloudflare
 > Workers and R2, written in Rust. It serves narinfo and NARs from R2, signs
 > uploads, and authorizes uploaders by an OIDC token from an issuer you trust.
 
 Reads are public. An upload needs an OIDC token as the password of HTTP Basic
-credentials, from a provider in `CF_NIX_API_OIDC_PROVIDERS`, for the cache's
+credentials, from a provider in `CLOUDFLARE_NIX_API_OIDC_PROVIDERS`, for the cache's
 audience, and matching one of that issuer's claim sets.
 
 ## Deploy
@@ -13,7 +13,7 @@ audience, and matching one of that issuer's claim sets.
 1. **Create the signing key** and store it in [Secrets Store](https://developers.cloudflare.com/secrets-store/), so it never passes through your deploy tooling. Wrangler prompts for the value: paste the whole `<key-name>:<base64>` line.
    ```sh
    nix key generate-secret --key-name cache.example.com-1
-   wrangler secrets-store secret create <store-id> --name cf-nix-signing-key --scopes workers --remote
+   wrangler secrets-store secret create <store-id> --name cloudflare-nix-signing-key --scopes workers --remote
    ```
    Clients need the matching public key in `trusted-public-keys` (`nix key convert-secret-to-public`, or the `PublicKey:` line of `<cache-url>/nix-cache-info`).
 2. **Decide who may upload**: a [provider list](#authentication). For GitHub Actions, look up numeric IDs to pin. Pin IDs, not names, because a deleted repo or org name can be re-registered by someone else:
@@ -30,13 +30,13 @@ audience, and matching one of that issuer's claim sets.
 
 | Binding | Type | Required | Description |
 |---|---|---|---|
-| `CF_NIX_API_BUCKET` | R2 bucket | yes | Stores `.narinfo` and `.nar` objects. |
-| `CF_NIX_API_SECRET` | Secrets Store secret | conditional | `<key-name>:<base64>`, as emitted by `nix key generate-secret`. Required unless every uploader sends signed narinfo. Only a Secrets Store binding is taken: bound as a plain secret or var, the Worker refuses to start, so the key never passes through Terraform or a command line. |
-| `CF_NIX_API_OIDC_PROVIDERS` | var | for uploads | JSON array of the identity providers whose tokens may upload; see [Authentication](#authentication). Unset, uploads are off. |
+| `CLOUDFLARE_NIX_API_BUCKET` | R2 bucket | yes | Stores `.narinfo` and `.nar` objects. |
+| `CLOUDFLARE_NIX_API_SECRET` | Secrets Store secret | conditional | `<key-name>:<base64>`, as emitted by `nix key generate-secret`. Required unless every uploader sends signed narinfo. Only a Secrets Store binding is taken: bound as a plain secret or var, the Worker refuses to start, so the key never passes through Terraform or a command line. |
+| `CLOUDFLARE_NIX_API_OIDC_PROVIDERS` | var | for uploads | JSON array of the identity providers whose tokens may upload; see [Authentication](#authentication). Unset, uploads are off. |
 
 ## Authentication
 
-`CF_NIX_API_OIDC_PROVIDERS` lists the identity providers whose tokens may
+`CLOUDFLARE_NIX_API_OIDC_PROVIDERS` lists the identity providers whose tokens may
 upload: each one's issuer, the audience its tokens must be for, and who may
 upload:
 
@@ -166,15 +166,15 @@ tag as the `audience`, its keys' URL as the `jwks_uri`, and claim sets on
 
 ## HTTP API
 
-The API is specified by the SDK's [OpenAPI document](../cf-nix-sdk/openapi/nix/cache/v1/cachev1.yaml).
-The Worker implements the server [generated from it](../cf-nix-sdk), so
+The API is specified by the SDK's [OpenAPI document](../cloudflare-nix-sdk/openapi/nix/cache/v1/cachev1.yaml).
+The Worker implements the server [generated from it](../cloudflare-nix-sdk), so
 requests are checked against the document before a handler sees them. Uploads
 must use the content type Nix sends: `text/x-nix-narinfo` for narinfo and
 `application/x-nix-nar` for NARs.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `GET` | `/nix-cache-info` | public | Cache metadata (priority, etc.), and the signing key's public half as `PublicKey: <key-name>:<base64>` when `CF_NIX_API_SECRET` is set. Nix ignores that line: it's there to copy into `trusted-public-keys`. |
+| `GET` | `/nix-cache-info` | public | Cache metadata (priority, etc.), and the signing key's public half as `PublicKey: <key-name>:<base64>` when `CLOUDFLARE_NIX_API_SECRET` is set. Nix ignores that line: it's there to copy into `trusted-public-keys`. |
 | `GET` | `/<hash>.narinfo` | public | Narinfo for a store path. |
 | `HEAD` | `/<hash>.narinfo` | public | Existence check for a narinfo (200 / 404). |
 | `PUT` | `/<hash>.narinfo` | token | Upload a narinfo. |
@@ -202,7 +202,7 @@ type, `413` for a body over 64 MiB, `400` or `422` for a malformed request.
 
 **Validation and signing:** the Worker parses each uploaded narinfo, checks its
 format, and requires its `StorePath` to match the request's hash. Every stored
-narinfo carries a `Sig:`. If the uploader didn't sign and `CF_NIX_API_SECRET`
+narinfo carries a `Sig:`. If the uploader didn't sign and `CLOUDFLARE_NIX_API_SECRET`
 is set, the Worker signs the upload itself. Otherwise the `PUT` returns `400`.
 
 ## Security
@@ -271,8 +271,8 @@ nix develop -c tests/run.sh                                  # this directory
 ```
 
 To run them against a `wrangler dev` you've started instead, set
-`CF_NIX_API_URL` if it isn't on `http://127.0.0.1:8787`, and its
-`CF_NIX_API_OIDC_PROVIDERS` audience to match:
+`CLOUDFLARE_NIX_API_URL` if it isn't on `http://127.0.0.1:8787`, and its
+`CLOUDFLARE_NIX_API_OIDC_PROVIDERS` audience to match:
 
 ```bash
 nix develop -c cargo test --features integration
@@ -280,7 +280,7 @@ nix develop -c cargo test --features integration
 
 ## Dependencies
 
-- [`cf-nix-sdk`](../cf-nix-sdk), the API's types, the server traits the Worker implements, and the narinfo format: parsing, validation and signing
+- [`cloudflare-nix-sdk`](../cloudflare-nix-sdk), the API's types, the server traits the Worker implements, and the narinfo format: parsing, validation and signing
 - [`worker`](https://crates.io/crates/worker) and [`worker-macros`](https://crates.io/crates/worker-macros), the Cloudflare Workers Rust SDK, with [`axum`](https://crates.io/crates/axum), which serves the SDK's router
 - [`http-auth-basic`](https://crates.io/crates/http-auth-basic) for the auth header
 - [`serde`](https://crates.io/crates/serde) and [`serde_json`](https://crates.io/crates/serde_json) for the provider list, token claims, discovery documents and key sets

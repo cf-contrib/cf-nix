@@ -38,7 +38,7 @@ mod client {
 
     impl HealthClient {
         /// A client for the server at `base_url`, e.g.
-        /// `https://cf-nix.example.workers.dev`, over a plain reqwest
+        /// `https://cloudflare-nix.example.workers.dev`, over a plain reqwest
         /// client.
         #[must_use]
         pub fn new(base_url: impl Into<String>) -> Self {

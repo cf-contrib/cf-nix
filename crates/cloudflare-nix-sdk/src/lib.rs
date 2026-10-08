@@ -1,10 +1,10 @@
-//! The Rust SDK for the cf-nix HTTP API: its types, a client, and the
+//! The Rust SDK for the cloudflare-nix HTTP API: its types, a client, and the
 //! traits a server of it implements, generated from the OpenAPI document.
 //!
 //! Everything is under [`v1`]:
 //!
 //! ```
-//! use cf_nix_sdk::v1::*;
+//! use cloudflare_nix_sdk::v1::*;
 //! ```
 //!
 //! # What is in it

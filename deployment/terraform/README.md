@@ -1,18 +1,18 @@
-# cf-nix Terraform module
+# cloudflare-nix Terraform module
 
-> The Terraform / OpenTofu half of [cf-nix](../..): deploys the released
+> The Terraform / OpenTofu half of [cloudflare-nix](../..): deploys the released
 > Worker bundle to Cloudflare Workers with its R2 bucket, bindings and a
 > workers.dev URL (or, optionally, a custom domain). No `wrangler` or local
 > build is needed.
 
 ```hcl
-module "cf_nix" {
-  source = "git::https://github.com/cf-contrib/cf-nix.git//deployment/terraform?ref=v0.8.0" # x-release-please-version
+module "cloudflare_nix" {
+  source = "git::https://github.com/cf-contrib/cloudflare-nix.git//deployment/terraform?ref=v0.8.0" # x-release-please-version
 
   account_id         = var.account_id
-  hostname           = "cf-nix.example.workers.dev"
+  hostname           = "cloudflare-nix.example.workers.dev"
   bucket_name        = "nix-cache"
-  signing_key_secret = { secret_store_id = var.secret_store_id, secret_name = "cf-nix-signing-key" }
+  signing_key_secret = { secret_store_id = var.secret_store_id, secret_name = "cloudflare-nix-signing-key" }
 
   # Who may upload: OIDC tokens from these providers that match a claim set.
   oidc_providers = [{
@@ -35,7 +35,7 @@ module "cf_nix" {
 }
 
 output "nix_cache_url" {
-  value = module.cf_nix.url
+  value = module.cloudflare_nix.url
 }
 ```
 
@@ -60,7 +60,7 @@ deploys the Worker bundle of the release its `ref` points to.
 # paste the whole <key-name>:<base64> line.
 nix key generate-secret --key-name cache.example.com-1
 wrangler secrets-store store list --remote     # note the store ID
-wrangler secrets-store secret create <store-id> --name cf-nix-signing-key --scopes workers --remote
+wrangler secrets-store secret create <store-id> --name cloudflare-nix-signing-key --scopes workers --remote
 
 export CLOUDFLARE_API_TOKEN=...
 tofu init
@@ -74,7 +74,7 @@ enters Terraform state or the plan. Clients need the matching public key in
 `nix key convert-secret-to-public < secret-key-file`.
 
 Then set up upload credentials as described in the Worker's
-[Authentication](../../crates/cf-nix-api/README.md#authentication) section, and push with
+[Authentication](../../crates/cloudflare-nix-api/README.md#authentication) section, and push with
 `nix copy --to '<url>?compression=none'`: the cache stores uncompressed NARs.
 
 ## Inputs
@@ -87,10 +87,10 @@ Then set up upload credentials as described in the Worker's
 | `bucket_name` | yes | | R2 bucket to create for `.narinfo` and `.nar` objects. |
 | `expire_after_days` | no | `45` | Delete objects this many days after upload. `null` keeps them. |
 | `signing_key_secret` | no | `null` | `{ secret_store_id, secret_name }` of the signing key. `null`: uploaders must sign. |
-| `oidc_providers` | no | `[]` | Identity providers whose tokens may upload: `{ issuer, audience?, jwks_uri?, typ?, claims }`. `audience` defaults to the cache URL; `typ` is the type the provider's tokens must have, `"at+jwt"` for a cf-sts broker; `claims` is a list of claim sets, any one of which must match. Empty turns uploads off. See the Worker's [Authentication](../../crates/cf-nix-api/README.md#authentication). |
+| `oidc_providers` | no | `[]` | Identity providers whose tokens may upload: `{ issuer, audience?, jwks_uri?, typ?, claims }`. `audience` defaults to the cache URL; `typ` is the type the provider's tokens must have, `"at+jwt"` for a cf-sts broker; `claims` is a list of claim sets, any one of which must match. Empty turns uploads off. See the Worker's [Authentication](../../crates/cloudflare-nix-api/README.md#authentication). |
 | `release_tag` | no | this module's release | Release to deploy, e.g. `v1.2.3`, or `"latest"`. |
 | `bundle_dir` | no | `null` | A local `worker-build --release` output directory to deploy instead of a release. |
-| `worker_name` | no | `cf-nix` | Cloudflare Worker script name. |
+| `worker_name` | no | `cloudflare-nix` | Cloudflare Worker script name. |
 | `worker_compatibility_date` | no | `2026-05-14` | Workers runtime compatibility date. |
 
 ## Outputs
@@ -118,7 +118,7 @@ GitHub tokens or GitHub Actions only:
   and write any `*` only at the end of a pattern.
 - `github_repository` is gone, and with it uploads with a person's GitHub
   token. Give people a token from an issuer such as Cloudflare Access instead.
-- The bindings are renamed `CF_NIX_CACHE_API_*`. The module sets them, so
+- The bindings are renamed `CLOUDFLARE_NIX_API_*`. The module sets them, so
   there's nothing to do unless you read them elsewhere.
 
 ## Migrating from `examples/terraform`
@@ -130,29 +130,29 @@ first `apply`:
 ```hcl
 moved {
   from = cloudflare_worker.nix_cache
-  to   = module.cf_nix.cloudflare_worker.this
+  to   = module.cloudflare_nix.cloudflare_worker.this
 }
 moved {
   from = cloudflare_worker_version.nix_cache
-  to   = module.cf_nix.cloudflare_worker_version.this
+  to   = module.cloudflare_nix.cloudflare_worker_version.this
 }
 moved {
   from = cloudflare_workers_deployment.nix_cache
-  to   = module.cf_nix.cloudflare_workers_deployment.this
+  to   = module.cloudflare_nix.cloudflare_workers_deployment.this
 }
 moved {
   from = cloudflare_r2_bucket.nix
-  to   = module.cf_nix.cloudflare_r2_bucket.this
+  to   = module.cloudflare_nix.cloudflare_r2_bucket.this
 }
 moved {
   from = cloudflare_r2_bucket_lifecycle.nix
-  to   = module.cf_nix.cloudflare_r2_bucket_lifecycle.this[0]
+  to   = module.cloudflare_nix.cloudflare_r2_bucket_lifecycle.this[0]
 }
 ```
 
 - `r2_bucket_name` is now `bucket_name`, and `hostname` is new.
 - `nix_secret` is gone: put the key in Secrets Store and set `signing_key_secret`. It then no longer sits in your Terraform state; remove the old value from any `terraform.tfvars`.
-- The bindings are named `CF_NIX_API_*`; the module sets them.
+- The bindings are named `CLOUDFLARE_NIX_API_*`; the module sets them.
 
 ## Development
 

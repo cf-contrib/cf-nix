@@ -22,7 +22,7 @@ jobs:
       # The OpenAPI document is compiled from TypeSpec and checked in, so it
       # must be what the .tsp compiles to.
       - name: Check OpenAPI Document
-        working-directory: crates/cf-nix-sdk/openapi
+        working-directory: crates/cloudflare-nix-sdk/openapi
         run: |
           nix develop --command npm ci
           nix develop --command npm run generate
@@ -32,7 +32,7 @@ jobs:
       # The Worker under wrangler dev, on a port and storage of its own, against
       # the tests' stand-in OIDC issuer.
       - name: Run Integration Tests
-        run: nix develop --command crates/cf-nix-api/tests/run.sh
+        run: nix develop --command crates/cloudflare-nix-api/tests/run.sh
       - name: Validate Terraform Module
         working-directory: deployment/terraform
         run: |
@@ -78,12 +78,12 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v23
       - name: Build with Nix
-        working-directory: crates/cf-nix-api
+        working-directory: crates/cloudflare-nix-api
         run: nix develop -c worker-build --release
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.release.outputs.tag_name }}
           files: |
-            crates/cf-nix-api/build/index.js
-            crates/cf-nix-api/build/index_bg.wasm
+            crates/cloudflare-nix-api/build/index.js
+            crates/cloudflare-nix-api/build/index_bg.wasm
