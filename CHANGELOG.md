@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/cf-contrib/cloudflare-nix/compare/v0.10.0...v0.11.0) (2026-10-08)
+
+
+### Features
+
+* keep the Worker's modules out of the plan ([#110](https://github.com/cf-contrib/cloudflare-nix/issues/110)) ([15adb0d](https://github.com/cf-contrib/cloudflare-nix/commit/15adb0d62f8949dd0bbcf1b577101a0bbdf2a89f))
+
 ## [0.10.0](https://github.com/cf-contrib/cloudflare-nix/compare/v0.9.0...v0.10.0) (2026-10-08)
 
 
