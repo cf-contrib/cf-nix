@@ -4,8 +4,9 @@
 //! Each request reads the Worker's configuration from its bindings, then
 //! serves the SDK's router over it: the cache protocol, with the auth layer
 //! authorizing every upload before its handler, and the health endpoints
-//! beside it. A configuration that can't be read, an unbound bucket or an
-//! invalid provider list, fails every request instead.
+//! beside it, ready only while the signing key can be read. A configuration
+//! that can't be read, an unbound bucket or an invalid provider list, fails
+//! every request instead.
 
 mod service;
 
@@ -16,7 +17,9 @@ use cloudflare_nix_sdk::v1::{self, ErrorCode};
 use tower_service::Service;
 use worker::*;
 
-use crate::service::{config::Config, handler::CacheServiceHandler, layer::AuthorizeLayer};
+use crate::service::{
+    config::Config, handler::CacheServiceHandler, health::ConfigCheck, layer::AuthorizeLayer,
+};
 
 #[event(fetch)]
 async fn fetch(req: HttpRequest, env: Env, _ctx: Context) -> Result<HttpResponse> {
@@ -27,10 +30,15 @@ async fn fetch(req: HttpRequest, env: Env, _ctx: Context) -> Result<HttpResponse
         Ok(config) => {
             let config = Arc::new(config);
             v1::cache_service_api_router(CacheServiceHandler::new(config.clone()))
-                .layer(AuthorizeLayer::new(config))
+                .layer(AuthorizeLayer::new(config.clone()))
                 // Merged after the layer, so outside it. Not in the spec:
                 // they're for whoever deploys the Worker, not its clients.
-                .merge(v1::HealthHandler::new().into_router())
+                // Ready only while the config checks out.
+                .merge(
+                    v1::HealthHandler::new()
+                        .readiness(ConfigCheck::new(config))
+                        .into_router(),
+                )
         }
         // Misconfigured, the Worker serves nothing: every request, the health
         // endpoints' too, is refused, with why logged.

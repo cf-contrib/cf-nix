@@ -76,7 +76,7 @@ wrangler secrets-store secret create <store-id> --name cloudflare-nix-signing-ke
 export CLOUDFLARE_API_TOKEN=...
 tofu init
 tofu apply
-curl -fsS "$(tofu output -raw cloudflare_nix_api_url)/health/ready"   # 200 once the Worker is serving and configured
+curl -fsS "$(tofu output -raw cloudflare_nix_api_url)/health/ready"   # 500 if a binding is wrong, 503 if the key can't be read
 ```
 
 Terraform only references the secret by store ID and name. The key never
@@ -87,6 +87,27 @@ enters Terraform state or the plan. Clients need the matching public key in
 Then set up upload credentials as described in the Worker's
 [Authentication](../../crates/cloudflare-nix-api/README.md#authentication) section, and push with
 `nix copy --to '<url>?compression=none'`: the cache stores uncompressed NARs.
+
+### Checking it's ready
+
+The module doesn't check the cache itself. To have every plan and apply warn
+when it isn't ready, add
+[terraform-http-check](https://github.com/tf-contrib/terraform-http-check)
+beside it:
+
+```hcl
+module "cloudflare_nix_api_ready" {
+  source = "git::https://github.com/tf-contrib/terraform-http-check.git?ref=v0.1.0"
+
+  url  = "${module.cloudflare_nix_api.url}/health/ready"
+  hint = "503 if the signing key can't be read or isn't valid, 500 if a binding or the provider list is wrong. Workers Logs says why (unready: or misconfigured:)."
+}
+```
+
+A key Secrets Store won't hand over then shows up in your apply, not on the
+first upload. It's a warning, never an error, and gives up within about 25s on
+a cache it can't reach. Leave it out where plans can't reach the cache, such as
+runners whose egress is allowlisted.
 
 ## Inputs
 

@@ -6,8 +6,10 @@
 //!
 //! An unbound bucket, an invalid provider list, or a signing key that isn't a
 //! Secrets Store binding fails it, and the Worker serves nothing until it's
-//! fixed. The signing key's value is read only when an upload needs signing,
-//! since reading it is async, so a rotated one takes effect on the next.
+//! fixed. The signing key's value is read only when it's needed, since
+//! reading it is async: to sign an upload, for `/nix-cache-info`'s public
+//! key, and by the readiness [`health`](super::health) check. A rotated one
+//! takes effect on the next.
 //!
 //! The provider list's format is here too: [`ProviderConfig`], a
 //! [`Provider`] with the claim sets that let its tokens upload, and what

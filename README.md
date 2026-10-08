@@ -72,7 +72,7 @@ Also: this is a hobby project. I wanted an excuse to spend more time with Cloudf
 ## Quick start
 
 1. **Create the signing key.** Generate it with `nix key generate-secret --key-name cache.example.com-1` and store it in Secrets Store. Clients need its public key (`nix key convert-secret-to-public`).
-2. **Deploy the Worker** with the [Terraform module](deployment/terraform), on workers.dev (a custom domain is optional), then check that `<cache-url>/health/ready` returns `200`.
+2. **Deploy the Worker** with the [Terraform module](deployment/terraform), on workers.dev (a custom domain is optional), then check that `<cache-url>/health/ready` returns `200`: the bindings were accepted and the signing key can be read.
 3. **Point Nix at it** in `nix.conf`:
    ```ini
    substituters = https://cloudflare-nix-api.example.workers.dev https://cache.nixos.org

@@ -22,7 +22,7 @@ audience, and matching one of that issuer's claim sets.
    gh api repos/<org>/<repo> --jq .id   # repository_id
    ```
 3. **Deploy** the released bundle with the [Terraform / OpenTofu module](../../deployment/terraform) (`//deployment/terraform?ref=<version>`). It downloads the release (`index.js` and `index_bg.wasm`, both required), creates the R2 bucket, and sets up the bindings below and the workers.dev URL (or an optional custom domain). To deploy a local build instead, run `worker-build --release` here and point the module's `bundle_dir` at this directory's `build/`.
-4. **Check** that `<cache-url>/health/ready` returns `200`. An unbound bucket or an invalid provider list fails every request, this one too, as a `500` with the reason in Workers Logs. An unreadable signing key shows only on the first upload that needs signing, as a `500`.
+4. **Check** that `<cache-url>/health/ready` returns `200`: the bindings and the provider list were accepted, and the signing key can be read. An unbound bucket or an invalid provider list fails every request, this one too, as a `500`, and a signing key that can't be read or isn't valid answers `503`; the reasons are in Workers Logs. To check it on every plan and apply, see the module's [Checking it's ready](../../deployment/terraform#checking-its-ready).
 
 `wrangler.toml` in this directory is for local development, not production.
 
@@ -182,7 +182,8 @@ must use the content type Nix sends: `text/x-nix-narinfo` for narinfo and
 | `GET` | `/nar/<hash>.nar` | public | NAR archive bytes. |
 | `HEAD` | `/nar/<hash>.nar` | public | Existence check for a NAR (200 / 404). |
 | `PUT` | `/nar/<hash>.nar` | token | Upload a NAR archive. |
-| `GET` | `/health/live`, `/health/ready` | public | `200` while the Worker is up and serving, and `500`, like every request, while its bucket is unbound or its provider list invalid. The SDK's `HealthHandler`; a deployment check, so not in the OpenAPI document. |
+| `GET` | `/health/live` | public | `200` while the Worker is up and serving, and `500`, like every request, while its bucket is unbound or its provider list invalid. The SDK's `HealthHandler`; a deployment check, so not in the OpenAPI document. |
+| `GET` | `/health/ready` | public | `200` when `/health/live` is and the signing key, if one is bound, can be read and is a valid key. `503` otherwise, with why in Workers Logs (`unready:`). It doesn't touch the bucket or the issuers. |
 
 **Errors** are JSON: `{ "error": "<code>", "message": "<reason>" }`. Nix prints the body of a failed upload, so the message says what to fix, except for `500` and `502`, whose details go only to the logs.
 
