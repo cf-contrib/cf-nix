@@ -6,8 +6,8 @@
 > secret to store or rotate.
 
 [![CI](https://github.com/cf-contrib/cloudflare-nix/actions/workflows/ci.yml/badge.svg)](https://github.com/cf-contrib/cloudflare-nix/actions/workflows/ci.yml)
-[![Rust (edition 2021)](https://img.shields.io/badge/Rust-2021-black?logo=rust)](https://www.rust-lang.org/)
-[![Nix Flake](https://img.shields.io/badge/Nix-Flake-5277C3?logo=nixos&logoColor=white)](https://nixos.wiki/wiki/Flakes)
+[![Rust](https://img.shields.io/badge/Rust-black?logo=rust)](https://www.rust-lang.org/)
+[![Nix Flake](https://img.shields.io/badge/Nix-Flake-5277C3?logo=nixos&logoColor=white)](https://wiki.nixos.org/wiki/Flakes)
 [![License: MIT](https://img.shields.io/github/license/cf-contrib/cloudflare-nix)](LICENSE)
 
 > [!WARNING]
