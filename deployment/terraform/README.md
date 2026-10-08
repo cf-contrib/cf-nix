@@ -7,7 +7,7 @@
 
 ```hcl
 module "cloudflare_nix_api" {
-  source = "git::https://github.com/cf-contrib/cloudflare-nix.git//deployment/terraform?ref=v0.8.0" # x-release-please-version
+  source = "git::https://github.com/cf-contrib/cloudflare-nix.git//deployment/terraform?ref=v0.9.0" # x-release-please-version
 
   account_id  = var.account_id
   hostname    = "cloudflare-nix-api.example.workers.dev"
