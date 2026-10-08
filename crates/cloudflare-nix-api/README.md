@@ -129,7 +129,7 @@ that issues for the cache:
 
 ```json
 {
-  "issuer": "https://cf-sts.example.com",
+  "issuer": "https://cloudflare-sts-api.example.com",
   "audience": "https://cache.example.com",
   "typ": "at+jwt",
   "claims": [{ "profile": "nix-push" }]
@@ -146,9 +146,9 @@ has expired. No token goes on a command line, where the process list would
 show it: curl reads the subject token from stdin.
 
 ```sh
-cloudflared access login https://cf-sts.example.com   # once
-subject=$(cloudflared access token -app=https://cf-sts.example.com)
-token=$(printf %s "$subject" | curl -fsS https://cf-sts.example.com/oauth/token \
+cloudflared access login https://cloudflare-sts-api.example.com   # once
+subject=$(cloudflared access token -app=https://cloudflare-sts-api.example.com)
+token=$(printf %s "$subject" | curl -fsS https://cloudflare-sts-api.example.com/oauth/token \
   -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
   --data-urlencode subject_token@- \
   -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \

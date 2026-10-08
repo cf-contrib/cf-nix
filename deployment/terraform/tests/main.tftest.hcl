@@ -107,7 +107,7 @@ run "oidc_providers" {
         claims   = [{ email = "uploader@example.com" }]
       },
       {
-        issuer = "https://cf-sts.example.com"
+        issuer = "https://cloudflare-sts-api.example.com"
         typ    = "at+jwt"
         claims = [{ profile = "nix-push" }]
       },
@@ -129,7 +129,7 @@ run "oidc_providers" {
           claims   = [{ email = "uploader@example.com" }]
         },
         {
-          issuer   = "https://cf-sts.example.com"
+          issuer   = "https://cloudflare-sts-api.example.com"
           audience = "https://cloudflare-nix-api.example.workers.dev"
           typ      = "at+jwt"
           claims   = [{ profile = "nix-push" }]

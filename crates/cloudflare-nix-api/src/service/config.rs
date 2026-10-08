@@ -210,7 +210,7 @@ mod tests {
     use super::*;
 
     const ISSUER: &str = "https://token.actions.githubusercontent.com";
-    const BROKER: &str = "https://cf-sts.example.com";
+    const BROKER: &str = "https://cloudflare-sts-api.example.com";
     const CACHE: &str = "https://cache.example.com";
 
     /// A provider list: GitHub Actions, pinned to the test org, and a

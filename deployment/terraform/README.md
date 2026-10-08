@@ -36,7 +36,7 @@ module "cloudflare_nix_api" {
     {
       # People, through a cf-sts broker: its access tokens only, from
       # the profile that issues them for this cache.
-      issuer = "https://cf-sts.example.com"
+      issuer = "https://cloudflare-sts-api.example.com"
       typ    = "at+jwt"
       claims = [
         { profile = "nix-push" },
