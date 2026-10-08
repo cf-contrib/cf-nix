@@ -47,12 +47,12 @@ resource "cloudflare_worker_version" "this" {
     {
       name           = "index.js"
       content_type   = "application/javascript+module"
-      content_base64 = local.index_js_base64
+      content_base64 = sensitive(local.index_js_base64)
     },
     {
       name           = "index_bg.wasm"
       content_type   = "application/wasm"
-      content_base64 = local.index_wasm_base64
+      content_base64 = sensitive(local.index_wasm_base64)
     },
   ]
 
