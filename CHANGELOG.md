@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.0](https://github.com/cf-contrib/cloudflare-nix/compare/v0.8.0...v0.9.0) (2026-10-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* the Terraform module's worker_name defaults to cloudflare-nix-api (was cloudflare-nix), and with it the workers.dev hostname.
+* nothing takes the old names. The Worker's bindings are CLOUDFLARE_NIX_API_* (were CF_NIX_API_*). The Terraform module's worker_name defaults to cloudflare-nix (was cf-nix), and it downloads releases from cf-contrib/cloudflare-nix.
+
+### Code Refactoring
+
+* name the Worker cloudflare-nix-api ([82cfb0b](https://github.com/cf-contrib/cloudflare-nix/commit/82cfb0bfc50a843ee23eae01ee9a0ca7c6d004c2))
+* rename the project cloudflare-nix ([44bbcf8](https://github.com/cf-contrib/cloudflare-nix/commit/44bbcf896f903f5c46407a76c8bf8ea5cc25163f))
+
 ## [0.8.0](https://github.com/cf-contrib/cf-nix/compare/v0.7.0...v0.8.0) (2026-10-07)
 
 
